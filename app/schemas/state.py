@@ -8,5 +8,4 @@ class GraphState(TypedDict):
     documents: List[str]
     citations: List[Dict[str, Any]]
     generation: str
-    search_fallback: bool
     is_off_topic: Optional[bool]  # True nếu câu hỏi ngoài phạm vi hải quan

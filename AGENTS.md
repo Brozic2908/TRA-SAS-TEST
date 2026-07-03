@@ -20,13 +20,10 @@ graph_state:
       type: array
       items:
         type: string
-      description: "Danh sách các đoạn trích dẫn lấy từ pgvector hoặc Web Search"
+      description: "Danh sách các đoạn trích dẫn lấy từ pgvector"
     generation:
       type: string
       description: "Câu trả lời cuối cùng do LLM sinh ra"
-    search_fallback:
-      type: boolean
-      description: "Cờ đánh dấu nếu bắt buộc phải kích hoạt nút dự phòng web_search"
   required: ["question", "documents"]
 ```
 

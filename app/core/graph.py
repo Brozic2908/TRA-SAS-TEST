@@ -7,7 +7,6 @@ from langgraph.graph import StateGraph, START, END
 
 from app.schemas.state import GraphState
 from app.services.llm import get_grader_llm, get_generator_llm
-from app.services.web_search import web_search
 from app.services.vector_store import similarity_search_structured
 from app.database.connection import async_session
 from app.core.exceptions import DBConnectionError, JSONFormatError, HallucinationError
@@ -63,7 +62,6 @@ async def route_question_node(state: GraphState) -> Dict[str, Any]:
             "documents": [],
             "citations": [],
             "generation": OFF_TOPIC_RESPONSE,
-            "search_fallback": False,
             "is_off_topic": True
         }
     return {"is_off_topic": False}
@@ -101,8 +99,7 @@ async def grade_documents_node(state: GraphState) -> Dict[str, Any]:
     has_llm_key = bool(settings.GROQ_API_KEY or settings.GOOGLE_API_KEY or settings.OPENROUTER_API_KEY)
     if not has_llm_key or getattr(settings, "OFFLINE_MODE", False):
         relevant_docs = documents
-        search_fallback = len(relevant_docs) == 0
-        return {"documents": relevant_docs, "search_fallback": search_fallback}
+        return {"documents": relevant_docs}
 
     try:
         grader_llm = get_grader_llm()
@@ -136,22 +133,10 @@ async def grade_documents_node(state: GraphState) -> Dict[str, Any]:
         logger.warning(f"Lỗi/Timeout LLM Grader ({str(e)}), dùng fallback giữ toàn bộ tài liệu gốc.")
         relevant_docs = documents
 
-    search_fallback = len(relevant_docs) == 0
     # Nếu grader lỗi và fallback giữ toàn bộ, kiểm tra lại bằng keyword
     if len(relevant_docs) == len(documents) and not is_customs_query(question):
-        return {"documents": [], "citations": [], "search_fallback": False, "generation": OFF_TOPIC_RESPONSE, "is_off_topic": True}
-    return {"documents": relevant_docs if relevant_docs else documents, "search_fallback": search_fallback}
-
-async def web_search_node(state: GraphState) -> Dict[str, Any]:
-    question = state.get("question")
-    logger.info(f"Kích hoạt web_search_node dự phòng cho câu hỏi: '{question}'")
-    
-    try:
-        search_results = await asyncio.wait_for(web_search(question), timeout=5.0)
-        return {"documents": search_results}
-    except Exception as e:
-        logger.warning(f"Lỗi/Timeout Web Search ({str(e)}), bỏ qua web search.")
-        return {"documents": state.get("documents", [])}
+        return {"documents": [], "citations": [], "generation": OFF_TOPIC_RESPONSE, "is_off_topic": True}
+    return {"documents": relevant_docs if relevant_docs else documents}
 
 async def generate_node(state: GraphState) -> Dict[str, Any]:
     question = state.get("question")
@@ -162,11 +147,7 @@ async def generate_node(state: GraphState) -> Dict[str, Any]:
         # Đã có generation từ guard trước, giữ nguyên
         return {}
 
-    if state.get("search_fallback") is True and not is_customs_query(question):
-        logger.info("Kích hoạt chế độ search_fallback tại generate_node cho câu hỏi ngoài phạm vi.")
-        return {
-            "generation": "Tôi là Trợ lý AI chuyên ngành Hải quan Việt Nam. Câu hỏi của bạn nằm ngoài phạm vi tài liệu hiện tại. Vui lòng đặt câu hỏi liên quan đến nghiệp vụ hải quan, xuất nhập khẩu hoặc biểu thuế."
-        }
+
     
     if not documents:
         return {
@@ -243,17 +224,11 @@ def decide_after_route(state: GraphState) -> str:
         return "generate_node"
     return "retrieve_node"
 
-def decide_route(state: GraphState) -> str:
-    if state.get("search_fallback"):
-        return "web_search_node"
-    return "generate_node"
-
 workflow = StateGraph(GraphState)
 
 workflow.add_node("route_question_node", route_question_node)
 workflow.add_node("retrieve_node", retrieve_node)
 workflow.add_node("grade_documents_node", grade_documents_node)
-workflow.add_node("web_search_node", web_search_node)
 workflow.add_node("generate_node", generate_node)
 
 workflow.add_edge(START, "route_question_node")
@@ -266,17 +241,8 @@ workflow.add_conditional_edges(
     }
 )
 workflow.add_edge("retrieve_node", "grade_documents_node")
+workflow.add_edge("grade_documents_node", "generate_node")
 
-workflow.add_conditional_edges(
-    "grade_documents_node",
-    decide_route,
-    {
-        "web_search_node": "web_search_node",
-        "generate_node": "generate_node"
-    }
-)
-
-workflow.add_edge("web_search_node", "generate_node")
 workflow.add_edge("generate_node", END)
 
 graph = workflow.compile()

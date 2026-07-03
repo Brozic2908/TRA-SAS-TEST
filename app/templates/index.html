@@ -785,9 +785,6 @@
                     
                     // Xác định Trajectory của LangGraph
                     const steps = ['retrieve_node', 'grade_documents_node'];
-                    if (data.search_fallback) {
-                        steps.push('web_search_node');
-                    }
                     steps.push('generate_node');
 
                     const botMsgId = Date.now() + 1;
@@ -797,8 +794,7 @@
                         text: data.generation,
                         documents: data.documents || [],
                         citations: data.citations || [],
-                        trajectory: steps,
-                        fallback: data.search_fallback
+                        trajectory: steps
                     }]);
                     setSelectedMessage(botMsgId);
                 } catch (error) {
@@ -1022,25 +1018,6 @@
                                 </div>
                                 <div className="diagram-arrow"><i className="fa-solid fa-arrow-down"></i></div>
 
-                                {currentMessage?.trajectory?.includes('web_search_node') && (
-                                    React.Fragment ? (
-                                        <React.Fragment>
-                                            <div className="diagram-node active" style={{borderColor: 'var(--warning)', color: 'var(--warning)', background: 'rgba(251, 191, 36, 0.05)'}}>
-                                                <span>web_search_node (Tavily)</span>
-                                                <span className="node-step-num" style={{background: 'var(--warning)'}}>!</span>
-                                            </div>
-                                            <div className="diagram-arrow"><i className="fa-solid fa-arrow-down"></i></div>
-                                        </React.Fragment>
-                                    ) : (
-                                        <div>
-                                            <div className="diagram-node active" style={{borderColor: 'var(--warning)', color: 'var(--warning)', background: 'rgba(251, 191, 36, 0.05)', marginBottom: '8px'}}>
-                                                <span>web_search_node (Tavily)</span>
-                                                <span className="node-step-num" style={{background: 'var(--warning)'}}>!</span>
-                                            </div>
-                                            <div className="diagram-arrow" style={{marginBottom: '8px'}}><i className="fa-solid fa-arrow-down"></i></div>
-                                        </div>
-                                    )
-                                )}
 
                                 <div className={`diagram-node ${currentMessage?.trajectory?.includes('generate_node') ? 'completed' : ''}`}>
                                     <span>generate_node (Tổng hợp LLM)</span>

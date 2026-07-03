@@ -18,10 +18,7 @@ graph TD
     Guard -- Câu hỏi nghiệp vụ Hải quan --> Retrieve[Nút 2: retrieve_node<br/>pgvector / BM25 Search]
     Retrieve --> Grade[Nút 3: grade_documents_node<br/>LLM Chấm điểm độ liên quan]
     
-    Grade --> Decision{Có tài liệu đạt >= 0.7?}
-    Decision -- Có --> Generate[Nút 5: generate_node<br/>Tổng hợp câu trả lời & Cảnh báo Hiệu lực]
-    Decision -- Không --> WebSearch[Nút 4: web_search_node<br/>Tìm kiếm dự phòng Tavily]
-    WebSearch --> Generate
+    Grade --> Generate[Nút 4: generate_node<br/>Tổng hợp câu trả lời & Cảnh báo Hiệu lực]
     
     Generate --> End
 ```
@@ -56,13 +53,8 @@ graph TD
 - **Nhiệm vụ:** LLM đóng vai kiểm duyệt viên đánh giá điểm liên quan (`relevance_score` từ 0.0 đến 1.0) của từng tài liệu được truy hồi.
 - **Xử lý:**
   - Giữ lại các tài liệu có điểm $\ge 0.7$.
-  - Nếu **tất cả** tài liệu đều dưới 0.7, gắn cờ `search_fallback=True`.
 
-#### 4️⃣ **`web_search_node` (Tìm kiếm web dự phòng)**
-- **Kích hoạt:** Khi `search_fallback=True` (CSDL nội bộ không chứa đủ thông tin).
-- **Nhiệm vụ:** Gọi API Tavily Web Search để tìm thông tin cập nhật trên Internet.
-
-#### 5️⃣ **`generate_node` (Sinh câu trả lời bám ngữ cảnh & Trích dẫn)**
+#### 4️⃣ **`generate_node` (Sinh câu trả lời bám ngữ cảnh & Trích dẫn)**
 - **Nhiệm vụ:** Tổng hợp câu trả lời tư vấn pháp lý hoàn chỉnh.
 - **Quy tắc nghiêm ngặt (Strict Zero-Hallucination Prompt):**
   1. **Bám sát ngữ cảnh:** Chỉ sử dụng thông tin từ danh sách tài liệu tham khảo được cung cấp bên dưới. Không dùng kiến thức bên ngoài, không tự suy diễn.
@@ -94,8 +86,7 @@ graph TD
          "superseded_by": null
        }
      ],
-     "generation": "Theo Điều 24 Luật Hải quan 54/2014/QH13, hồ sơ hải quan bao gồm...",
-     "search_fallback": false
+     "generation": "Theo Điều 24 Luật Hải quan 54/2014/QH13, hồ sơ hải quan bao gồm..."
    }
    ```
 3. **Frontend UI Rendering:**
@@ -114,7 +105,7 @@ RAG-LLM/
 │   ├── core/                 # Cấu hình config, exceptions, LangGraph workflow (graph.py)
 │   ├── database/             # PostgreSQL connection, ORM models (LegalDocument, LegalArticle...)
 │   ├── schemas/              # Pydantic & TypedDict schemas (GraphState...)
-│   ├── services/             # Services: llm, vector_store, web_search, bm25_retriever, ingest
+│   ├── services/             # Services: llm, vector_store, bm25_retriever, ingest
 │   ├── templates/            # HTML/React Frontend Dashboard UI (index.html)
 │   └── main.py               # FastAPI App entrypoint
 ├── data/
@@ -152,7 +143,7 @@ Hệ thống lưu trữ dữ liệu pháp lý theo cấu trúc quan hệ phẳng
    - `embedding`: Vector 3072 chiều.
 
 3. **`conversations` (Lịch sử Hội thoại):**
-   - `session_id`, `question`, `answer`, `citations_json`, `search_fallback`, `created_at`.
+   - `session_id`, `question`, `answer`, `citations_json`, `created_at`.
 
 ---
 
