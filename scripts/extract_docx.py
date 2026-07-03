@@ -21,20 +21,8 @@ def get_docx_text(path):
         return f"Lỗi đọc file: {str(e)}"
 
 if __name__ == "__main__":
-    docx_path = os.path.join("data", "raw", "95_VBHN-VPQH_m_673593.docx")
+    docx_path = os.path.join("data", "raw", "31_2022_TT-BTC_343978.doc")
     text = get_docx_text(docx_path)
     
-    # In ra 3000 ký tự đầu tiên để xem cấu trúc và nội dung Điều khoản
-    print("=== 3000 KÝ TỰ ĐẦU TIÊN CỦA LUẬT HẢI QUAN (95/VBHN-VPQH) ===")
+    print("=== TRÍCH XUẤT 3000 KÝ TỰ ĐẦU TIÊN ===")
     print(text[:3000])
-    
-    # Tìm các Điều liên quan đến thủ tục hải quan, khai hải quan, hoặc thông quan để trích xuất
-    print("\n=== TRÍCH XUẤT CÁC ĐIỀU QUAN TRỌNG ===")
-    lines = text.split("\n")
-    for i, line in enumerate(lines):
-        if line.startswith("Điều 3.") or line.startswith("Điều 29.") or line.startswith("Điều 16."):
-            print(f"\n--- {line} ---")
-            # In ra 5 dòng tiếp theo của Điều đó
-            for j in range(1, 8):
-                if i + j < len(lines):
-                    print(lines[i+j])

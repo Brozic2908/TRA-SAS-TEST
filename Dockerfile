@@ -15,5 +15,4 @@ COPY . .
 
 EXPOSE 8000 8888
 
-# Mặc định khởi động cả Jupyter Notebook để bạn test .ipynb
-# CMD ["jupyter", "notebook", "--ip=0.0.0.0", "--port=8888", "--no-browser", "--allow-root", "--NotebookApp.token=''"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

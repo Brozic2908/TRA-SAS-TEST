@@ -756,6 +756,7 @@
                         sender: 'bot',
                         text: data.generation,
                         documents: data.documents || [],
+                        citations: data.citations || [],
                         trajectory: steps,
                         fallback: data.search_fallback
                     }]);
@@ -966,10 +967,30 @@
                         <div className="panel-section">
                             <div className="panel-section-title">
                                 <i className="fa-regular fa-folder-open"></i>
-                                Tài liệu tham chiếu ({currentMessage?.documents?.length || 0})
+                                Trích dẫn Pháp lý & Nguồn ({currentMessage?.documents?.length || 0})
                             </div>
                             <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
-                                {currentMessage?.documents && currentMessage.documents.length > 0 ? (
+                                {currentMessage?.citations && currentMessage.citations.length > 0 ? (
+                                    currentMessage.citations.map((cit, idx) => (
+                                        <div key={idx} className="reference-doc-card" style={{borderLeft: cit.status === 'bi_thay_the' ? '3px solid var(--danger)' : '3px solid var(--accent-primary)'}}>
+                                            <div className="doc-card-meta">
+                                                <span style={{fontWeight: '700', color: '#60a5fa'}}>{cit.law_number} - {cit.article_number}</span>
+                                                <span className={`doc-card-source-tag ${cit.status === 'bi_thay_the' ? 'web' : ''}`} style={{background: cit.status === 'bi_thay_the' ? 'rgba(244, 63, 94, 0.2)' : 'rgba(16, 185, 129, 0.2)', color: cit.status === 'bi_thay_the' ? '#f43f5e' : '#10b981'}}>
+                                                    {cit.status === 'bi_thay_the' ? '⚠️ Hết hiệu lực' : '✅ Còn hiệu lực'}
+                                                </span>
+                                            </div>
+                                            <div style={{fontWeight: '600', fontSize: '13px', marginY: '4px', color: '#f8fafc'}}>{cit.title}</div>
+                                            {cit.superseded_by && (
+                                                <div style={{fontSize: '11px', color: '#fbbf24', fontStyle: 'italic', marginBottom: '6px'}}>
+                                                    (Thay thế bởi: {cit.superseded_by})
+                                                </div>
+                                            )}
+                                            <div style={{whiteSpace: 'pre-line', fontSize: '12px', color: 'var(--text-body)'}}>
+                                                {currentMessage.documents[idx] ? currentMessage.documents[idx].substring(0, 250) + '...' : ''}
+                                            </div>
+                                        </div>
+                                    ))
+                                ) : currentMessage?.documents && currentMessage.documents.length > 0 ? (
                                     currentMessage.documents.map((doc, idx) => (
                                         <div key={idx} className="reference-doc-card">
                                             <div className="doc-card-meta">

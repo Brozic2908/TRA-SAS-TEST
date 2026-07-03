@@ -37,12 +37,19 @@ async def test_graph_success_trajectory():
     -> Đi thẳng tới sinh câu trả lời -> Hoàn thành không có bịa đặt.
     Quỹ đạo mong đợi: retrieve -> grade -> generate.
     """
-    with patch("app.core.graph.similarity_search", new_callable=AsyncMock) as mock_sim_search, \
+    with patch("app.core.graph.similarity_search_structured", new_callable=AsyncMock) as mock_sim_search, \
          patch("app.core.graph.get_grader_llm") as mock_get_grader, \
          patch("app.core.graph.get_generator_llm") as mock_get_generator:
         
         # 1. Giả lập tìm kiếm trả về 1 tài liệu
-        mock_sim_search.return_value = ["Tài liệu hải quan hợp lệ."]
+        mock_sim_search.return_value = [{
+            "content": "Tài liệu hải quan hợp lệ.",
+            "law_number": "54/2014/QH13",
+            "article_number": "Điều 16",
+            "title": "Địa điểm làm thủ tục hải quan",
+            "status": "con_hieu_luc",
+            "superseded_by": None
+        }]
         
         # 2. Giả lập Grader LLM trả về relevance_score = 0.9 (hợp lệ)
         mock_grader_chain = MockRunnable(MockBatchDocumentGrader([MockDocumentGrade(index=0, relevance_score=0.9)]))
@@ -81,13 +88,20 @@ async def test_graph_fallback_trajectory():
     -> Kích hoạt Web Search (Tavily) -> Sinh câu trả lời.
     Quỹ đạo mong đợi: retrieve -> grade -> web_search -> generate.
     """
-    with patch("app.core.graph.similarity_search", new_callable=AsyncMock) as mock_sim_search, \
+    with patch("app.core.graph.similarity_search_structured", new_callable=AsyncMock) as mock_sim_search, \
          patch("app.core.graph.web_search", new_callable=AsyncMock) as mock_web_search, \
          patch("app.core.graph.get_grader_llm") as mock_get_grader, \
          patch("app.core.graph.get_generator_llm") as mock_get_generator:
         
         # 1. Giả lập tìm kiếm nội bộ ra tài liệu không liên quan
-        mock_sim_search.return_value = ["Tài liệu không liên quan."]
+        mock_sim_search.return_value = [{
+            "content": "Tài liệu không liên quan.",
+            "law_number": "54/2014/QH13",
+            "article_number": "Điều 1",
+            "title": "Phạm vi điều chỉnh",
+            "status": "con_hieu_luc",
+            "superseded_by": None
+        }]
         
         # 2. Giả lập Grader đánh giá relevance_score = 0.2 (thấp hơn 0.7)
         mock_grader_chain = MockRunnable(MockBatchDocumentGrader([MockDocumentGrade(index=0, relevance_score=0.2)]))
@@ -146,12 +160,19 @@ async def test_graph_hallucination_error_handling():
     Test kịch bản: Câu trả lời chứa thông tin bịa đặt (Hallucination) 
     -> Đồ thị bắn HallucinationError và dừng xử lý.
     """
-    with patch("app.core.graph.similarity_search", new_callable=AsyncMock) as mock_sim_search, \
+    with patch("app.core.graph.similarity_search_structured", new_callable=AsyncMock) as mock_sim_search, \
          patch("app.core.graph.get_grader_llm") as mock_get_grader, \
          patch("app.core.graph.get_generator_llm") as mock_get_generator:
         
         # 1. Tìm kiếm nội bộ thành công
-        mock_sim_search.return_value = ["Quy định A quy định về thủ tục nhập khẩu."]
+        mock_sim_search.return_value = [{
+            "content": "Quy định A quy định về thủ tục nhập khẩu.",
+            "law_number": "54/2014/QH13",
+            "article_number": "Điều 16",
+            "title": "Địa điểm hải quan",
+            "status": "con_hieu_luc",
+            "superseded_by": None
+        }]
         
         # 2. Đánh giá tài liệu liên quan = 0.95
         mock_grader_chain = MockRunnable(MockBatchDocumentGrader([MockDocumentGrade(index=0, relevance_score=0.95)]))

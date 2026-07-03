@@ -1,4 +1,4 @@
-from typing import TypedDict, List
+from typing import TypedDict, List, Dict, Any
 
 class GraphState(TypedDict):
     """
@@ -6,5 +6,6 @@ class GraphState(TypedDict):
     """
     question: str
     documents: List[str]
+    citations: List[Dict[str, Any]]
     generation: str
     search_fallback: bool
