@@ -681,22 +681,27 @@
         };
 
         const App = () => {
-            const [messages, setMessages] = useState([
-                {
-                    id: 1,
-                    sender: 'bot',
-                    text: 'Xin chào! Tôi là Trợ lý AI chuyên ngành Hải quan Việt Nam. Tôi có thể giúp bạn giải đáp các thủ tục hành chính, quy chế xuất nhập khẩu, tra cứu biểu thuế và giải quyết các vướng mắc về thủ tục VNACCS.\nBạn cần tôi hỗ trợ thông tin gì hôm nay?',
-                    trajectory: ['retrieve_node', 'grade_documents_node', 'generate_node'],
-                    documents: []
-                }
-            ]);
-            
+            const WELCOME_MSG = {
+                id: 1,
+                sender: 'bot',
+                text: 'Xin chào! Tôi là Trợ lý AI chuyên ngành Hải quan Việt Nam. Tôi có thể giúp bạn giải đáp các thủ tục hành chính, quy chế xuất nhập khẩu, tra cứu biểu thuế và giải quyết các vướng mắc về thủ tục VNACCS.\nBạn cần tôi hỗ trợ thông tin gì hôm nay?',
+                trajectory: ['retrieve_node', 'grade_documents_node', 'generate_node'],
+                documents: []
+            };
+
+            const makeSessionId = () => 'session-' + Date.now();
+
+            const [currentSessionId, setCurrentSessionId] = React.useState(makeSessionId);
+            const [messages, setMessages] = useState([WELCOME_MSG]);
             const [inputValue, setInputValue] = useState('');
             const [isTyping, setIsTyping] = useState(false);
             const [selectedMessage, setSelectedMessage] = useState(1);
             const [showInspector, setShowInspector] = useState(true);
+            // sessions: [{id, title, messages}]
+            const [sessions, setSessions] = useState([]);
             
             const messageListRef = useRef(null);
+            const apiHost = window.location.port === '5500' ? 'http://127.0.0.1:8000' : '';
 
             // Tự động cuộn xuống cuối
             useEffect(() => {
@@ -705,7 +710,44 @@
                 }
             }, [messages, isTyping]);
 
+            // Cập nhật session trong danh sách khi messages thay đổi
+            useEffect(() => {
+                const userMsgs = messages.filter(m => m.sender === 'user');
+                if (userMsgs.length === 0) return;
+                const title = userMsgs[0].text.length > 40
+                    ? userMsgs[0].text.slice(0, 40) + '...'
+                    : userMsgs[0].text;
+                setSessions(prev => {
+                    const exists = prev.find(s => s.id === currentSessionId);
+                    if (exists) {
+                        return prev.map(s => s.id === currentSessionId
+                            ? { ...s, title, messages }
+                            : s
+                        );
+                    }
+                    return [{ id: currentSessionId, title, messages }, ...prev];
+                });
+            }, [messages]);
+
+            // Tạo đoạn chat mới
+            const handleNewChat = () => {
+                const newId = makeSessionId();
+                setCurrentSessionId(newId);
+                setMessages([WELCOME_MSG]);
+                setSelectedMessage(1);
+                setInputValue('');
+            };
+
+            // Chọn một session cũ từ sidebar
+            const handleSelectSession = (session) => {
+                setCurrentSessionId(session.id);
+                setMessages(session.messages);
+                setSelectedMessage(session.messages[session.messages.length - 1].id);
+            };
+
+
             const currentMessage = messages.find(m => m.id === selectedMessage) || messages[messages.length - 1];
+
 
             const handleSend = async (text) => {
                 const queryText = text || inputValue;
@@ -722,12 +764,10 @@
                 setIsTyping(true);
 
                 try {
-                    // API endpoint động hỗ trợ Live Server
-                    const apiHost = window.location.port === '5500' ? 'http://127.0.0.1:8000' : '';
                     const response = await fetch(`${apiHost}/api/v1/query`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ question: queryText })
+                        body: JSON.stringify({ question: queryText, session_id: currentSessionId })
                     });
                     
                     if (!response.ok) {
@@ -801,22 +841,67 @@
                             </div>
 
                             <div className="history-section">
-                                <div className="history-title">Lịch sử hội thoại</div>
-                                <div className="history-item active">
-                                    <i className="fa-regular fa-comments"></i>
-                                    <span>Tư vấn xuất nhập khẩu</span>
+                                <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'6px', padding:'0 4px'}}>
+                                    <div className="history-title" style={{margin:0}}>Lịch sử hội thoại</div>
+                                    <button
+                                        onClick={handleNewChat}
+                                        title="Đoạn chat mới"
+                                        style={{
+                                            background: 'var(--accent-primary)',
+                                            border: 'none',
+                                            borderRadius: '6px',
+                                            color: '#fff',
+                                            width: '26px',
+                                            height: '26px',
+                                            cursor: 'pointer',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            fontSize: '16px',
+                                            lineHeight: 1,
+                                            flexShrink: 0,
+                                            boxShadow: '0 2px 8px rgba(99,102,241,0.35)',
+                                            transition: 'opacity .2s'
+                                        }}
+                                    >+</button>
                                 </div>
+
+                                {sessions.length === 0 ? (
+                                    <div style={{padding: '8px 12px', fontSize: '12px', color: 'var(--text-muted)', fontStyle: 'italic'}}>
+                                        Chưa có lịch sử hội thoại
+                                    </div>
+                                ) : (
+                                    sessions.map((session) => (
+                                        <div
+                                            key={session.id}
+                                            className={`history-item ${session.id === currentSessionId ? 'active' : ''}`}
+                                            onClick={() => handleSelectSession(session)}
+                                            style={{cursor:'pointer', gap:'8px', padding:'8px 12px', borderRadius:'8px',
+                                                background: session.id === currentSessionId ? 'rgba(99,102,241,0.13)' : 'transparent',
+                                                borderLeft: session.id === currentSessionId ? '3px solid var(--accent-primary)' : '3px solid transparent'
+                                            }}
+                                        >
+                                            <i className="fa-regular fa-comments" style={{flexShrink:0, opacity: session.id === currentSessionId ? 1 : 0.6}}></i>
+                                            <span style={{flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', fontSize:'12px'}}>
+                                                {session.title}
+                                            </span>
+                                            <span style={{fontSize:'10px', color:'var(--text-muted)', flexShrink:0}}>
+                                                {session.messages.filter(m=>m.sender==='user').length} Q
+                                            </span>
+                                        </div>
+                                    ))
+                                )}
                             </div>
                         </div>
 
                         <div className="system-info-box">
                             <div className="info-row">
-                                <span>LLM Grader:</span>
-                                <span>Gemini Flash</span>
+                                <span>LLM Model:</span>
+                                <span style={{color:'#a78bfa', fontWeight:'600'}}>Groq Llama 3.3 70B</span>
                             </div>
                             <div className="info-row">
-                                <span>LLM Generator:</span>
-                                <span>Gemini Flash</span>
+                                <span>Retrieval:</span>
+                                <span>pgvector + BM25</span>
                             </div>
                             <div className="info-row">
                                 <span>Vector DB:</span>

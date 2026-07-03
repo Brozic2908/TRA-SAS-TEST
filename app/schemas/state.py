@@ -1,4 +1,4 @@
-from typing import TypedDict, List, Dict, Any
+from typing import TypedDict, List, Dict, Any, Optional
 
 class GraphState(TypedDict):
     """
@@ -9,3 +9,4 @@ class GraphState(TypedDict):
     citations: List[Dict[str, Any]]
     generation: str
     search_fallback: bool
+    is_off_topic: Optional[bool]  # True nếu câu hỏi ngoài phạm vi hải quan

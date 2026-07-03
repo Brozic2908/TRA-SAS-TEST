@@ -1,4 +1,5 @@
 import logging
+import asyncio
 from typing import Dict, Any, List
 from pydantic import BaseModel, Field
 from langchain_core.prompts import ChatPromptTemplate
@@ -14,48 +15,60 @@ from app.core.config import settings
 
 logger = logging.getLogger("customs_rag")
 
-# 1. Định nghĩa các cấu trúc dữ liệu cho Structured Output của LLM
 class DocumentGrade(BaseModel):
-    """Điểm số đánh giá độ liên quan của từng tài liệu."""
     index: int = Field(description="Chỉ mục của tài liệu tương ứng (0-indexed)")
     relevance_score: float = Field(description="Điểm số liên quan, từ 0.0 (không liên quan) đến 1.0 (hoàn toàn liên quan)")
 
 class BatchDocumentGrader(BaseModel):
-    """Đánh giá độ liên quan hàng loạt tài liệu."""
     grades: List[DocumentGrade] = Field(description="Danh sách kết quả chấm điểm cho từng tài liệu")
 
 class HallucinationGrader(BaseModel):
-    """Kết quả kiểm duyệt Hallucination."""
     is_hallucination: bool = Field(
         description="True nếu câu trả lời chứa thông tin bịa đặt/không có trong tài liệu, False nếu trung thực hoàn toàn"
     )
-    reason: str = Field(
-        description="Lý do chi tiết cho việc đánh giá"
-    )
+    reason: str = Field(description="Lý do chi tiết cho việc đánh giá")
 
-# 2. Hàm giả lập gửi cảnh báo cho Admin khi gặp sự cố hệ thống
 async def notify_admin(message: str):
     logger.error(f"[ADMIN NOTIFICATION ALERT]: {message}")
 
 def is_customs_query(query: str) -> bool:
-    """
-    Kiểm tra xem câu hỏi có chứa các từ khóa liên quan đến nghiệp vụ hải quan hay không.
-    """
     query_lower = query.lower()
     keywords = [
         "hải quan", "hai quan", "thuế", "thue", "xuất khẩu", "xuat khau", "nhập khẩu", "nhap khau",
         "tờ khai", "to khai", "thông quan", "thong quan", "quá cảnh", "qua canh", "chứng từ", "chung tu",
         "hồ sơ", "ho so", "biểu thuế", "bieu thue", "mã hs", "ma hs", "hs code", "luật", "luat",
         "nghị định", "nghi dinh", "thông tư", "thong tu", "quyết định", "quyet dinh", "văn bản", "van ban",
-        "cửa khẩu", "cua khau", "logistics", "xử phạt", "xu pat"
+        "cửa khẩu", "cua khau", "logistics", "xử phạt", "xu pat", "vnaccs", "vcis",
+        "xuất xứ", "xuat xu", "co c/o", "nghĩa vụ", "nghi vu", "khai báo", "khai bao",
+        "kiểm tra", "kiem tra", "giấy phép", "giay phep", "quản lý", "quan ly",
+        "đối tượng", "doi tuong", "nguyên tắc", "nguyen tac", "điều", "dieu", "khoản", "khoan",
+        "quy định", "quy dinh", "pháp luật", "phap luat", "hàng hóa", "hang hoa", "áp dụng", "ap dung"
     ]
     return any(kw in query_lower for kw in keywords)
 
-# 3. Định nghĩa các Nút (Nodes) trong đồ thị LangGraph
+
+OFF_TOPIC_RESPONSE = (
+    "Xin chào! Tôi là Trợ lý AI chuyên ngành **Hải quan Việt Nam**, được phát triển trên nền tảng công nghệ RAG (Retrieval-Augmented Generation) kết hợp LangGraph + PostgreSQL/pgvector.\n\n"
+    "Tôi có thể giúp bạn tra cứu điều khoản pháp luật, quy trình thủ tục, biểu thuế và các vướng mắc trong hoạt động **xuất nhập khẩu, hải quan, logistics**.\n\n"
+    "Xin hãy đặt câu hỏi liên quan đến nghiệp vụ hải quan để tôi hỗ trợ chính xác nhất."
+)
+
+
+async def route_question_node(state: GraphState) -> Dict[str, Any]:
+    """Guard: chặn sớm câu hỏi off-topic trước khi đến retrieve."""
+    question = state.get("question", "")
+    if not is_customs_query(question):
+        logger.info(f"Câu hỏi off-topic, trả về ngay: '{question}'")
+        return {
+            "documents": [],
+            "citations": [],
+            "generation": OFF_TOPIC_RESPONSE,
+            "search_fallback": False,
+            "is_off_topic": True
+        }
+    return {"is_off_topic": False}
+
 async def retrieve_node(state: GraphState) -> Dict[str, Any]:
-    """
-    Thực hiện truy vấn tìm kiếm tương đồng trên pgvector/BM25 kèm trích xuất Metadata Citation.
-    """
     question = state.get("question")
     logger.info(f"Kích hoạt retrieve_node cho câu hỏi: '{question}'")
     
@@ -81,20 +94,16 @@ async def retrieve_node(state: GraphState) -> Dict[str, Any]:
         raise DBConnectionError(err_msg)
 
 async def grade_documents_node(state: GraphState) -> Dict[str, Any]:
-    """
-    Đánh giá độ liên quan của tài liệu lấy ra bằng LLM hoặc Keyword Heuristics (nếu Offline).
-    """
     question = state.get("question")
     documents = state.get("documents", [])
     logger.info(f"Kích hoạt grade_documents_node chấm điểm {len(documents)} tài liệu.")
     
-    # 1. Nếu Offline / Không có Google API Key -> Dùng Keyword Heuristics Chấm điểm
-    if not settings.GOOGLE_API_KEY:
+    has_llm_key = bool(settings.GROQ_API_KEY or settings.GOOGLE_API_KEY or settings.OPENROUTER_API_KEY)
+    if not has_llm_key or getattr(settings, "OFFLINE_MODE", False):
         relevant_docs = documents
         search_fallback = len(relevant_docs) == 0
         return {"documents": relevant_docs, "search_fallback": search_fallback}
 
-    # 2. Online Mode -> Dùng Gemini Flash Grader
     try:
         grader_llm = get_grader_llm()
         structured_grader = grader_llm.with_structured_output(BatchDocumentGrader)
@@ -114,7 +123,8 @@ async def grade_documents_node(state: GraphState) -> Dict[str, Any]:
         
         if documents:
             documents_list = "\n---\n".join([f"Tài liệu [{i}]: {doc}" for i, doc in enumerate(documents)])
-            res = await grader_chain.ainvoke({"documents_list": documents_list, "question": question})
+            # Timeout 4s cho grader call
+            res = await asyncio.wait_for(grader_chain.ainvoke({"documents_list": documents_list, "question": question}), timeout=4.0)
             
             grade_dict = {g.index: g.relevance_score for g in res.grades}
             for i, doc in enumerate(documents):
@@ -123,36 +133,35 @@ async def grade_documents_node(state: GraphState) -> Dict[str, Any]:
                 if score >= 0.7:
                     relevant_docs.append(doc)
     except Exception as e:
-        logger.warning(f"Lỗi LLM Grader (dùng fallback tài liệu gốc): {str(e)}")
+        logger.warning(f"Lỗi/Timeout LLM Grader ({str(e)}), dùng fallback giữ toàn bộ tài liệu gốc.")
         relevant_docs = documents
 
     search_fallback = len(relevant_docs) == 0
+    # Nếu grader lỗi và fallback giữ toàn bộ, kiểm tra lại bằng keyword
+    if len(relevant_docs) == len(documents) and not is_customs_query(question):
+        return {"documents": [], "citations": [], "search_fallback": False, "generation": OFF_TOPIC_RESPONSE, "is_off_topic": True}
     return {"documents": relevant_docs if relevant_docs else documents, "search_fallback": search_fallback}
 
 async def web_search_node(state: GraphState) -> Dict[str, Any]:
-    """
-    Nút dự phòng: Tra cứu bổ sung thông tin từ Web Search (Tavily).
-    """
     question = state.get("question")
     logger.info(f"Kích hoạt web_search_node dự phòng cho câu hỏi: '{question}'")
     
     try:
-        search_results = await web_search(question)
+        search_results = await asyncio.wait_for(web_search(question), timeout=5.0)
         return {"documents": search_results}
     except Exception as e:
-        err_msg = f"Lỗi thực hiện Web Search: {str(e)}"
-        await notify_admin(err_msg)
-        raise JSONFormatError(err_msg)
+        logger.warning(f"Lỗi/Timeout Web Search ({str(e)}), bỏ qua web search.")
+        return {"documents": state.get("documents", [])}
 
 async def generate_node(state: GraphState) -> Dict[str, Any]:
-    """
-    Tổng hợp câu trả lời cuối cùng bám sát ngữ cảnh + trích dẫn số hiệu / điều khoản + cảnh báo văn bản hết hiệu lực.
-    """
     question = state.get("question")
     documents = state.get("documents", [])
     citations = state.get("citations", [])
     
-    # 1. Xử lý câu hỏi ngoài phạm vi nghiệp vụ hải quan
+    if state.get("is_off_topic") or state.get("generation"):
+        # Đã có generation từ guard trước, giữ nguyên
+        return {}
+
     if state.get("search_fallback") is True and not is_customs_query(question):
         logger.info("Kích hoạt chế độ search_fallback tại generate_node cho câu hỏi ngoài phạm vi.")
         return {
@@ -164,7 +173,6 @@ async def generate_node(state: GraphState) -> Dict[str, Any]:
             "generation": "Không tìm thấy thông tin phù hợp trong bộ quy định thủ tục Hải quan được cung cấp."
         }
 
-    # 2. Xử lý Cảnh báo Pháp lý nếu tài liệu trích dẫn thuộc văn bản đã BỊ THAY THẾ (như 128/2020/NĐ-CP)
     warnings = []
     for c in citations:
         if c.get("status") == "bi_thay_the" or c.get("superseded_by"):
@@ -175,56 +183,88 @@ async def generate_node(state: GraphState) -> Dict[str, Any]:
 
     warning_text = "\n\n".join(warnings) if warnings else ""
 
-    # 3. Kịch bản Offline / Không có Google API Key -> Extractive RAG Answer Generator
-    if not settings.GOOGLE_API_KEY:
-        logger.info("Chạy chế độ Offline Response Generator (Extractive RAG)...")
-        extractive_body = "\n\n".join([f"• Trích dẫn [{c.get('law_number', 'N/A')} - {c.get('article_number', 'N/A')}]: {d[:400]}..." for c, d in zip(citations, documents)])
-        
-        answer = f"Theo quy định Hải quan Việt Nam liên quan đến câu hỏi của bạn:\n\n{extractive_body}"
-        if warning_text:
-            answer = f"{warning_text}\n\n{answer}"
-        return {"generation": answer}
+    # Định dạng ngữ cảnh có gắn nhãn rõ ràng [Số hiệu văn bản - Số điều] cho LLM
+    formatted_docs = []
+    for c, d in zip(citations, documents):
+        law_str = f"Văn bản: {c.get('law_number', 'N/A')}, {c.get('article_number', 'N/A')} - {c.get('title', '')}"
+        status_str = f" [CẢNH BÁO: Đã bị thay thế bởi {c.get('superseded_by')}]" if c.get('superseded_by') else ""
+        formatted_docs.append(f"📌 [{law_str}{status_str}]\n{d.strip()}")
+    context_text = "\n\n---\n\n".join(formatted_docs)
 
-    # 4. Kịch bản Online -> Gemini Generation + Hallucination Check
-    generator_llm = get_generator_llm()
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", "Bạn là một chuyên gia tư vấn pháp chế Hải quan Việt Nam chuyên nghiệp. "
-                   "Hãy giải đáp câu hỏi của doanh nghiệp một cách tự tin, rõ ràng, TRÍCH DẪN ĐÚNG số điều và số hiệu văn bản (Ví dụ: Theo Điều 16 Luật Hải quan 54/2014/QH13...). "
-                   "LƯU Ý QUAN TRỌNG: Nếu trong ngữ cảnh có cảnh báo văn bản đã hết hiệu lực hoặc bị thay thế (ví dụ Nghị định 128/2020 bị thay thế bởi 169/2026), bạn BẮT BUỘC phải đưa ra cảnh báo này cho doanh nghiệp ngay trong câu trả lời. Tuyệt đối không bịa đặt (no hallucination)."),
-        ("human", "Tài liệu tham khảo:\n\n{documents}\n\nCâu hỏi: {question}")
-    ])
-    
-    generator_chain = prompt | generator_llm
-    
+    # Hàm tạo câu trả lời dạng Extractive Fallback khi Offline hoặc Gemini gặp lỗi/hết Quota
+    def build_extractive_fallback():
+        ext_body = []
+        for c, d in zip(citations, documents):
+            law_info = f"**{c.get('law_number', 'N/A')} - {c.get('article_number', 'N/A')}** ({c.get('title', '')})"
+            ext_body.append(f"📌 {law_info}:\n{d.strip()}")
+        ans = "Dựa trên bộ văn bản quy định thủ tục Hải quan Việt Nam, thông tin giải đáp cho câu hỏi của bạn như sau:\n\n" + "\n\n".join(ext_body)
+        if warning_text:
+            ans = f"{warning_text}\n\n{ans}"
+        return ans
+
+    has_llm_key = bool(settings.GROQ_API_KEY or settings.GOOGLE_API_KEY or settings.OPENROUTER_API_KEY)
+    if not has_llm_key or getattr(settings, "OFFLINE_MODE", False):
+        logger.info("Chạy chế độ Offline Response Generator (Extractive RAG) do không có LLM API Key hoặc OFFLINE_MODE=True...")
+        return {"generation": build_extractive_fallback()}
+
+    # Online Mode -> LLM Generation với Prompt kiểm soát chặt chẽ
     try:
-        response = await generator_chain.ainvoke({
-            "documents": "\n---\n".join(documents),
+        logger.info(f"Kích hoạt LLM Generator cho câu hỏi: '{question}'...")
+        generator_llm = get_generator_llm()
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", "Bạn là Chuyên gia Tư vấn Pháp chế Hải quan Việt Nam.\n"
+                       "QUY TẮC BẮT BUỘC KHI TRẢ LỜI (STRICT ZERO-HALLUCINATION & CITATION RULES):\n"
+                       "1. BÁM SÁT NGỮ CẢNH: Chỉ sử dụng thông tin từ danh sách tài liệu tham khảo được cung cấp bên dưới. Không dùng kiến thức bên ngoài, không tự suy diễn.\n"
+                       "2. TRÍCH DẪN RÕ RÀNG: Mọi ý trả lời BẮT BUỘC phải trích dẫn rõ số điều và số hiệu văn bản (Ví dụ: 'Theo Điều 24 Luật Hải quan 54/2014/QH13...').\n"
+                       "3. CẢNH BÁO HIỆU LỰC: Nếu tài liệu chứa cảnh báo hết hiệu lực hoặc bị thay thế (ví dụ NĐ 128/2020 bị thay thế bởi 169/2026), bạn BẮT BUỘC phải thông báo cho doanh nghiệp ngay đầu câu trả lời.\n"
+                       "4. KHÔNG TÌM THẤY THÔNG TIN: Nếu tài liệu tham khảo KHÔNG chứa câu trả lời cho câu hỏi của doanh nghiệp, bạn phải trả lời nguyên văn: 'Không tìm thấy thông tin phù hợp trong bộ CSDL quy định thủ tục Hải quan Việt Nam.' Tuyệt đối không bịa đặt."),
+            ("human", "TÀI LIỆU PHÁP LUẬT THAM KHẢO:\n\n{context_text}\n\nCÂU HỎI DOANH NGHIỆP: {question}")
+        ])
+        
+        generator_chain = prompt | generator_llm
+        
+        response = await asyncio.wait_for(generator_chain.ainvoke({
+            "context_text": context_text,
             "question": question
-        })
+        }), timeout=20.0)
+        
         generation = response.content
+        logger.info(f"LLM Generator sinh thành công câu trả lời ({len(generation)} kí tự).")
         if warning_text and warning_text not in generation:
             generation = f"{warning_text}\n\n{generation}"
+        return {"generation": generation}
     except Exception as e:
-        logger.warning(f"Lỗi LLM Generator online, dùng fallback: {str(e)}")
-        generation = f"Theo quy định Hải quan:\n\n" + "\n".join(documents[:2])
+        logger.warning(f"Lỗi/Timeout LLM Generator ({type(e).__name__}: {str(e)}). Tự động chuyển sang Extractive Fallback!")
+        return {"generation": build_extractive_fallback()}
 
-    return {"generation": generation}
+def decide_after_route(state: GraphState) -> str:
+    """Nếu đã có generation (off-topic), nhảy thẳng generate_node (sẽ skip)."""
+    if state.get("is_off_topic") is True or len(state.get("generation", "")) > 0:
+        return "generate_node"
+    return "retrieve_node"
 
-# 4. Các cạnh điều kiện (Conditional Edges)
 def decide_route(state: GraphState) -> str:
     if state.get("search_fallback"):
         return "web_search_node"
     return "generate_node"
 
-# 5. Khởi tạo và liên kết StateGraph
 workflow = StateGraph(GraphState)
 
+workflow.add_node("route_question_node", route_question_node)
 workflow.add_node("retrieve_node", retrieve_node)
 workflow.add_node("grade_documents_node", grade_documents_node)
 workflow.add_node("web_search_node", web_search_node)
 workflow.add_node("generate_node", generate_node)
 
-workflow.add_edge(START, "retrieve_node")
+workflow.add_edge(START, "route_question_node")
+workflow.add_conditional_edges(
+    "route_question_node",
+    decide_after_route,
+    {
+        "retrieve_node": "retrieve_node",
+        "generate_node": "generate_node"
+    }
+)
 workflow.add_edge("retrieve_node", "grade_documents_node")
 
 workflow.add_conditional_edges(

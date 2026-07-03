@@ -1,4 +1,5 @@
 import logging
+import asyncio
 from typing import List, Dict, Any, Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,12 +26,11 @@ async def add_document(
         vector = None
         if settings.GOOGLE_API_KEY:
             try:
-                vector = await embeddings.aembed_query(content)
+                vector = await asyncio.wait_for(embeddings.aembed_query(content), timeout=4.0)
             except Exception as ex:
                 logger.warning(f"Không thể tạo embedding online (fallback rỗng): {str(ex)}")
         
         if vector is None:
-            # Fake vector 3072 chiều nếu offline
             vector = [0.0] * 3072
 
         doc = CustomsDocument(
@@ -55,26 +55,26 @@ async def add_document(
 async def similarity_search_structured(session: AsyncSession, query: str, limit: int = 3) -> List[Dict[str, Any]]:
     """
     Tìm kiếm tài liệu tương đồng dựa trên pgvector cosine distance (<=>)
-    hoặc fallback BM25 offline nếu không có Google API Key.
+    hoặc fallback BM25 offline nếu không có Google API Key hoặc API bị treo/lỗi quota.
     """
-    # 1. Kịch bản Offline / Không có Google API Key -> Dùng BM25 / ILIKE Search
+    # 1. Kịch bản Offline / Không có Google API Key -> Dùng BM25 / SQL ILIKE query
     if not settings.GOOGLE_API_KEY or getattr(settings, "OFFLINE_MODE", False):
-        logger.info("Chạy chế độ Offline Search (BM25 / SQL ILIKE query)...")
-        # Query trực tiếp từ DB
+        logger.info("Chạy chế độ Offline Search (BM25 Lexical query)...")
         stmt = select(CustomsDocument).limit(100)
         res = await session.execute(stmt)
         all_docs = res.scalars().all()
 
-        doc_dicts = []
-        for d in all_docs:
-            doc_dicts.append({
+        doc_dicts = [
+            {
                 "content": d.content,
                 "law_number": d.law_number or "N/A",
                 "article_number": d.article_number or "N/A",
                 "title": d.title or "N/A",
                 "status": d.status or "con_hieu_luc",
                 "superseded_by": d.superseded_by or ""
-            })
+            }
+            for d in all_docs
+        ]
 
         bm25_index.fit(doc_dicts)
         results = bm25_index.search(query, top_k=limit)
@@ -82,9 +82,9 @@ async def similarity_search_structured(session: AsyncSession, query: str, limit:
             results = doc_dicts[:limit]
         return results
 
-    # 2. Kịch bản Online với pgvector (<=> toán tử Cosine)
+    # 2. Kịch bản Online với pgvector (<=> toán tử Cosine) kèm Timeout 3s tránh treo
     try:
-        query_vector = await embeddings.aembed_query(query)
+        query_vector = await asyncio.wait_for(embeddings.aembed_query(query), timeout=3.0)
         statement = (
             select(CustomsDocument)
             .order_by(CustomsDocument.embedding.cosine_distance(query_vector))
@@ -106,23 +106,27 @@ async def similarity_search_structured(session: AsyncSession, query: str, limit:
         logger.info(f"Tìm kiếm tương đồng pgvector trả về {len(documents)} kết quả.")
         return documents
     except Exception as e:
-        logger.error(f"Lỗi tìm kiếm pgvector: {str(e)}. Fallback sang SQL query...")
-        # Fallback query đơn giản nếu pgvector lỗi
-        stmt = select(CustomsDocument).limit(limit)
+        logger.warning(f"Lỗi/Timeout Gemini API Vector Search ({str(e)}). Tự động Fallback sang BM25 Offline...")
+        # Tự động Fallback sang BM25 nếu API bị hết quota hoặc treo
+        stmt = select(CustomsDocument).limit(100)
         res = await session.execute(stmt)
-        rows = list(res.scalars().all())
-        return [{
-            "content": r.content,
-            "law_number": r.law_number or "N/A",
-            "article_number": r.article_number or "N/A",
-            "title": r.title or "N/A",
-            "status": r.status or "con_hieu_luc",
-            "superseded_by": r.superseded_by or ""
-        } for r in rows]
+        all_docs = res.scalars().all()
+
+        doc_dicts = [
+            {
+                "content": d.content,
+                "law_number": d.law_number or "N/A",
+                "article_number": d.article_number or "N/A",
+                "title": d.title or "N/A",
+                "status": d.status or "con_hieu_luc",
+                "superseded_by": d.superseded_by or ""
+            }
+            for d in all_docs
+        ]
+        bm25_index.fit(doc_dicts)
+        results = bm25_index.search(query, top_k=limit)
+        return results if results else doc_dicts[:limit]
 
 async def similarity_search(session: AsyncSession, query: str, limit: int = 3) -> List[str]:
-    """
-    Trả về danh sách chuỗi content (để giữ tương thích ngược với code cũ).
-    """
     struct_docs = await similarity_search_structured(session, query, limit=limit)
     return [d["content"] for d in struct_docs]

@@ -1,32 +1,108 @@
 # 📜 Trợ Lý AI Hỏi - Đáp Văn Bản Pháp Luật Hải Quan Việt Nam (Agentic RAG)
 
-Ứng dụng Full-stack Chatbot tư vấn thủ tục Hải quan Việt Nam xây dựng trên kiến trúc **Agentic Corrective RAG (LangGraph)**, kết hợp cơ sở dữ liệu quan hệ **PostgreSQL (SQL)** và **pgvector** cho tìm kiếm tương đồng vector.
+Hệ thống Full-stack Chatbot tư vấn thủ tục Hải quan Việt Nam xây dựng trên kiến trúc **Agentic Corrective RAG (LangGraph)**, kết hợp cơ sở dữ liệu quan hệ **PostgreSQL (SQL)**, **pgvector** cho tìm kiếm tương đồng vector và bộ tìm kiếm từ vựng **BM25**.
 
 ---
 
-## 🏛️ Kiến Trúc Hệ Thống & Công Nghệ Sử Dụng
+## 🏛️ Kiến Trúc Hệ Thống & Luồng Xử Lý (End-to-End Flow)
 
-### 1. Công nghệ Lõi (Tech Stack)
-- **Backend:** FastAPI (lập trình bất đồng bộ `async`/`await` tránh nghẽn Event Loop).
-- **Cơ sở dữ liệu (SQL):** PostgreSQL tích hợp extension `pgvector` phục vụ Cosine Similarity Search (`<=>`).
-- **AI Framework & Orchestration:** LangChain kết hợp LangGraph điều phối luồng đồ thị tự kiểm duyệt (Corrective RAG).
-- **LLM Routing:** 
-  - *Online Mode:* Google Gemini Flash (Model Grader & Generator).
-  - *Offline Fallback Mode:* BM25 Lexical Retriever + Extractive RAG (hoạt động 100% không cần Internet/API Key).
-- **Frontend:** React SPA Dashboard (Single Page Application) tích hợp sẵn Markdown Renderer, Citation Badges & Inspector Graph Trajectory.
-
-### 2. Sơ đồ Luồng Đồ Thị LangGraph (Agentic Graph Workflow)
+### 1. Sơ đồ Luồng Đồ Thị LangGraph (Agentic Graph Workflow)
 
 ```mermaid
 graph TD
-    Start([Bắt đầu: User Query]) --> Retrieve[Nút retrieve_node: pgvector / BM25 Search]
-    Retrieve --> Grade[Nút grade_documents_node: LLM Chấm điểm độ liên quan]
-    Grade --> Decision{Có tài liệu đạt > 0.7?}
-    Decision -- Có --> Generate[Nút generate_node: Tổng hợp câu trả lời & Cảnh báo Hiệu lực]
-    Decision -- Không --> WebSearch[Nút web_search_node: Tìm kiếm dự phòng Tavily]
+    Start([Bắt đầu: User Query]) --> Guard[Nút 1: route_question_node<br/>Kiểm duyệt Off-topic]
+    
+    Guard -- Cụm câu hỏi off-topic / Chào hỏi --> OffTopicAns[Trả lời ngay câu chào mừng AI]
+    OffTopicAns --> End([Kết thúc: Trả về JSON & Citation Badges])
+    
+    Guard -- Câu hỏi nghiệp vụ Hải quan --> Retrieve[Nút 2: retrieve_node<br/>pgvector / BM25 Search]
+    Retrieve --> Grade[Nút 3: grade_documents_node<br/>LLM Chấm điểm độ liên quan]
+    
+    Grade --> Decision{Có tài liệu đạt >= 0.7?}
+    Decision -- Có --> Generate[Nút 5: generate_node<br/>Tổng hợp câu trả lời & Cảnh báo Hiệu lực]
+    Decision -- Không --> WebSearch[Nút 4: web_search_node<br/>Tìm kiếm dự phòng Tavily]
     WebSearch --> Generate
-    Generate --> End([Kết thúc: Trả về JSON & Citation Badges])
+    
+    Generate --> End
 ```
+
+---
+
+## 🔄 Chi Tiết Luồng Dữ Liệu & Các Nút Đồ Thị (Detailed Workflow Steps)
+
+### 🔹 Giai đoạn 1: Nạp & Tiền xử lý dữ liệu (Data Ingestion Pipeline)
+1. **Trích xuất File Word (.doc/.docx):** Hàm `extract_text_from_file` tự động đọc các file văn bản pháp luật thực tế trong `data/raw/` (Luật 54/2014, NĐ 08/2015, NĐ 128/2020, NĐ 169/2026, TT 33/2023, TT 38/2015, TT 121/2025...).
+2. **Phân tách Điều / Khoản:** Hàm `parse_articles_from_text` dùng regex nhận diện cấu trúc `Điều X. Tiêu đề` và chia nhỏ thành từng chunk pháp lý độc lập.
+3. **Gắn Metadata & Trạng thái Hiệu lực:** Mỗi Điều khoản được gắn metadata số hiệu, ngày ban hành, trạng thái hiệu lực (`con_hieu_luc` / `bi_thay_the`), và văn bản thay thế (`superseded_by`).
+4. **Embedding & Lưu DB (Idempotency):** Tính toán Vector Embedding 3072 chiều và nạp đồng thời vào PostgreSQL SQL (`legal_documents`, `legal_articles`) & pgvector (`customs_docs`). Pipeline tự động kiểm tra trùng lặp để chỉ nạp dữ liệu mới.
+
+---
+
+### 🔹 Giai đoạn 2: Xử lý Câu hỏi & Điều phối Đồ thị LangGraph (LangGraph Nodes)
+
+#### 1️⃣ **`route_question_node` (Off-topic Guard - Chặn sớm)**
+- **Nhiệm vụ:** Kiểm tra xem câu hỏi có thuộc phạm vi hải quan / xuất nhập khẩu / pháp luật không (`is_customs_query`).
+- **Xử lý:**
+  - Nếu là câu chào hỏi hoặc lạc đề (VD: *"Bạn là ai?"*, *"Thời tiết hôm nay thế nào?"*), nút trả về ngay câu phản hồi lịch sự giới thiệu trợ lý AI, **ngắt luồng sớm** không cần qua CSDL hay LLM ➔ Tiết kiệm chi phí & thời gian.
+  - Nếu là câu hỏi nghiệp vụ hải quan, chuyển sang nút `retrieve_node`.
+
+#### 2️⃣ **`retrieve_node` (Truy hồi dữ liệu Hybrid)**
+- **Nhiệm vụ:** Tìm kiếm 3 Điều khoản có độ tương đồng cao nhất với câu hỏi.
+- **Xử lý:**
+  - **Online Mode:** Sử dụng toán tử Cosine (`<=>`) của pgvector trên PostgreSQL với vector embedding query 3072 chiều.
+  - **Offline / Fallback Mode:** Tự động chuyển sang thuật toán **BM25 Lexical Search** thuần Python khi mất mạng hoặc không có Gemini API key.
+
+#### 3️⃣ **`grade_documents_node` (Kiểm duyệt độ liên quan bằng LLM)**
+- **Nhiệm vụ:** LLM đóng vai kiểm duyệt viên đánh giá điểm liên quan (`relevance_score` từ 0.0 đến 1.0) của từng tài liệu được truy hồi.
+- **Xử lý:**
+  - Giữ lại các tài liệu có điểm $\ge 0.7$.
+  - Nếu **tất cả** tài liệu đều dưới 0.7, gắn cờ `search_fallback=True`.
+
+#### 4️⃣ **`web_search_node` (Tìm kiếm web dự phòng)**
+- **Kích hoạt:** Khi `search_fallback=True` (CSDL nội bộ không chứa đủ thông tin).
+- **Nhiệm vụ:** Gọi API Tavily Web Search để tìm thông tin cập nhật trên Internet.
+
+#### 5️⃣ **`generate_node` (Sinh câu trả lời bám ngữ cảnh & Trích dẫn)**
+- **Nhiệm vụ:** Tổng hợp câu trả lời tư vấn pháp lý hoàn chỉnh.
+- **Quy tắc nghiêm ngặt (Strict Zero-Hallucination Prompt):**
+  1. **Bám sát ngữ cảnh:** Chỉ sử dụng thông tin từ danh sách tài liệu tham khảo được cung cấp bên dưới. Không dùng kiến thức bên ngoài, không tự suy diễn.
+  2. **Trích dẫn bắt buộc:** Phải trích dẫn rõ **[Điều X - Số hiệu văn bản]** (VD: *Theo Điều 24 Luật Hải quan 54/2014/QH13...*).
+  3. **Cảnh báo hết hiệu lực:** Tự động phát hiện và hiển thị cảnh báo đỏ (`⚠️ [CẢNH BÁO PHÁP LÝ]: Văn bản 128/2020 đã bị THAY THẾ bởi 169/2026`).
+  4. **Không tìm thấy:** Nếu ngữ cảnh không chứa thông tin, trả về nguyên văn: *"Không tìm thấy thông tin phù hợp trong bộ CSDL quy định thủ tục Hải quan Việt Nam."*
+- **LLM Routing Cascade (Tự động xoay Model):**
+  - Priority 1: **OpenRouter (DeepSeek R1)** (khi có `OPENROUTER_API_KEY`)
+  - Priority 2: **Groq Llama 3.3 70B** ➔ Tự động fallback sang **Llama 3.1 8B Instant** nếu chạm rate limit HTTP 429
+  - Priority 3: **Google Gemini 2.0 Flash**
+  - Priority 4: **Extractive RAG Fallback** (Hoạt động 100% khi mất mạng)
+
+---
+
+### 🔹 Giai đoạn 3: Phản hồi REST API & Render Frontend UI
+1. **Lưu lịch sử SQL:** Ghi nhận toàn bộ thông tin cuộc hội thoại (Session ID, Câu hỏi, Câu trả lời, Citations JSON, Search Fallback Flag) vào bảng `conversations` trong PostgreSQL.
+2. **Trả về REST API Response:**
+   ```json
+   {
+     "session_id": "session-1783072112789",
+     "question": "Hồ sơ hải quan gồm những chứng từ gì?",
+     "documents": ["..."],
+     "citations": [
+       {
+         "law_number": "54/2014/QH13",
+         "article_number": "Điều 24",
+         "title": "Hồ sơ hải quan",
+         "status": "con_hieu_luc",
+         "superseded_by": null
+       }
+     ],
+     "generation": "Theo Điều 24 Luật Hải quan 54/2014/QH13, hồ sơ hải quan bao gồm...",
+     "search_fallback": false
+   }
+   ```
+3. **Frontend UI Rendering:**
+   - Markdown Formatting tự động.
+   - Thêm Citation Badges màu xanh (`con_hieu_luc`) hoặc màu đỏ (`bi_thay_the`).
+   - Nút `+` tạo đoạn chat mới, sidebar lưu danh sách lịch sử theo session.
+   - Panel Inspector bên phải hiển thị sơ đồ luồng LangGraph đã đi qua (`trajectory`) và danh sách trích đoạn thô.
 
 ---
 
@@ -42,7 +118,7 @@ RAG-LLM/
 │   ├── templates/            # HTML/React Frontend Dashboard UI (index.html)
 │   └── main.py               # FastAPI App entrypoint
 ├── data/
-│   └── raw/                  # Bộ văn bản pháp luật mẫu (.doc, .pdf)
+│   └── raw/                  # Bộ văn bản pháp luật mẫu (.doc, .docx)
 ├── notebooks/                # Jupyter Notebooks kiểm tra dữ liệu
 │   └── check_data.ipynb      # Interactive data inspection & RAG test
 ├── scripts/                  # Scripts hỗ trợ (extract_docx.py, ingest.py)
@@ -55,7 +131,7 @@ RAG-LLM/
 ├── Dockerfile                # Docker build configuration
 ├── docker-compose.yml        # Docker Compose service configuration
 ├── main.py                   # Root runner (uvicorn main:app)
-└── README.md                 # Tài liệu hướng dẫn dự án
+└── README.md                 # Tài liệu hướng dẫn & Flow dự án
 ```
 
 ---
@@ -68,27 +144,27 @@ Hệ thống lưu trữ dữ liệu pháp lý theo cấu trúc quan hệ phẳng
    - `law_number`: Số hiệu (Luật 54/2014/QH13, NĐ 08/2015/NĐ-CP, NĐ 128/2020/NĐ-CP, NĐ 169/2026/NĐ-CP, TT 38/2015/TT-BTC, TT 33/2023/TT-BTC...).
    - `doc_type`: Loại văn bản (Luật, Nghị định, Thông tư).
    - `status`: Trạng thái hiệu lực (`con_hieu_luc`, `bi_thay_the`).
-   - `superseded_by`: Văn bản thay thế liên quan (Ví dụ: `128/2020/NĐ-CP` bị thay thế bởi `169/2026/NĐ-CP`).
+   - `superseded_by`: Văn bản thay thế (Ví dụ: `128/2020/NĐ-CP` bị thay thế bởi `169/2026/NĐ-CP`).
 
 2. **`legal_articles` & `customs_docs` (Chi tiết Điều / Khoản & Vector):**
-   - `law_number`, `article_number` (Điều 16, Điều 29, Điều 24...).
+   - `law_number`, `article_number` (Điều 16, Điều 24, Điều 29...).
    - `title`, `content` (Nội dung Điều/Khoản).
    - `embedding`: Vector 3072 chiều.
 
 3. **`conversations` (Lịch sử Hội thoại):**
-   - `session_id`, `question`, `answer`, `citations_json`, `created_at`.
+   - `session_id`, `question`, `answer`, `citations_json`, `search_fallback`, `created_at`.
 
 ---
 
-## 🚀 Hướng Dẫn Cài Đặt & Chạy Ứng Dụng
+## 🚀 Hướng Dẫn Cài Đặt & Vận Hành
 
-### 1. Khởi động nhanh bằng Docker Compose (Khuyên dùng cho Demo)
+### 1. Khởi động nhanh bằng Docker Compose (Khuyên dùng)
 
 ```bash
-# 1. Build và khởi động trọn gói PostgreSQL (pgvector) + FastAPI Web App
+# Build và khởi động trọn gói PostgreSQL (pgvector) + FastAPI Web App
 docker compose up --build -d
 
-# 2. Mở trình duyệt truy cập Chatbot Dashboard
+# Truy cập Chatbot Dashboard trên trình duyệt
 http://localhost:8000
 ```
 
@@ -100,30 +176,27 @@ python -m venv .venv
 source .venv/bin/activate  # Trên Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 
-# 2. Nạp dữ liệu văn bản Hải quan vào PostgreSQL & pgvector
-python ingest.py
+# 2. Tạo biến môi trường .env từ .env.example
+cp .env.example .env
 
-# 3. Khởi chạy FastAPI Backend Server
+# 3. Khởi chạy FastAPI Backend Server (Tự động seed dữ liệu khi khởi động)
 python main.py
 ```
 
-### 3. Kiểm tra Dữ liệu bằng Jupyter Notebook
-Mở file `check_data.ipynb` bằng VS Code / Jupyter Lab để xem trực tiếp các Điều/Khoản đã nạp và chạy thử luồng retrieval.
-
----
-
-## 🧪 Chạy Kiểm Thử Tự Động (Pytest & Trajectory Evaluation)
-
+### 3. Kiểm tra Dữ liệu & Unit Tests
 ```bash
-# Trực tiếp chạy bộ kiểm thử Trajectory & REST API Schema
+# Chạy bộ test tự động kiểm tra Endpoints, LangGraph Trajectory & Citation Schema
 pytest tests/ -v
 ```
 
 ---
 
-## ⚡ Chế Độ Chạy Offline Fallback (Offline Demo Mode)
+## ⚡ Tính Năng Nổi Bật
 
-Hệ thống được thiết kế **Zero-Downtime Guarantee**: Khi mất kết nối Internet hoặc không nhập `GOOGLE_API_KEY`, ứng dụng tự động kích hoạt chế độ **Offline BM25 Lexical Search & Extractive RAG Answer Generator**. Bạn có thể an toàn demo sản phẩm mà không phụ thuộc bất kỳ API bên thứ 3 nào.
+- **Zero-Downtime Offline Fallback:** Tự động chuyển sang BM25 Lexical Search & Extractive RAG khi mất kết nối Internet.
+- **Anti-Hallucination Guardrails:** Ép buộc LLM chỉ trả lời dựa trên tài liệu CSDL và trả về *"Không tìm thấy..."* nếu không có thông tin.
+- **Smart Law Version Control:** Tự động đưa ra cảnh báo khi người dùng tra cứu tài liệu đã bị thay thế bởi văn bản mới.
+- **Model Fallback Cascade:** Tự động điều hướng giữa OpenRouter DeepSeek R1, Groq Llama 3.3 70B, Groq Llama 3.1 8B và Gemini 2.0 Flash để tránh lỗi rớt API hoặc nghẽn Rate Limit.
 
 ---
 

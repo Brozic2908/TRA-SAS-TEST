@@ -10,14 +10,18 @@ class Settings(BaseSettings):
     POSTGRES_PASSWORD: str = Field(default="MyP@ss:word123")
     POSTGRES_DB: str = Field(default="customs_rag")
     POSTGRES_PORT: int = Field(default=5432)
-    POSTGRES_HOST: str = Field(default="localhost")  # Fallback to localhost for local testing
+    POSTGRES_HOST: str = Field(default="localhost")
     
-    # Computed Database URL (prefer environment DATABASE_URL if provided)
     DATABASE_URL: str = Field(default="")
 
-    # API Keys
+    # AI API Keys
+    GROQ_API_KEY: str = Field(default="")
     GOOGLE_API_KEY: str = Field(default="")
     TAVILY_API_KEY: str = Field(default="")
+    OPENROUTER_API_KEY: str = Field(default="")
+
+    # Chế độ Offline Fallback
+    OFFLINE_MODE: bool = Field(default=False)
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -26,11 +30,8 @@ class Settings(BaseSettings):
     )
 
     def get_database_url(self) -> str:
-        # Mã hóa mật khẩu tránh ký tự đặc biệt như ':' và '@'
         password_quoted = urllib.parse.quote_plus(self.POSTGRES_PASSWORD)
         
-        # Tự động phát hiện nếu host 'db' không phân giải được (chạy bên ngoài Docker)
-        # thì sẽ tự động fallback sang 'localhost'
         host = self.POSTGRES_HOST
         if host == "db":
             try:
@@ -38,7 +39,6 @@ class Settings(BaseSettings):
             except socket.gaierror:
                 host = "localhost"
         
-        # Nếu DATABASE_URL chứa mật khẩu thô chưa mã hóa từ docker-compose, ta bỏ qua và tự dựng lại
         if self.DATABASE_URL and self.POSTGRES_PASSWORD not in self.DATABASE_URL:
             url = self.DATABASE_URL
             if url.startswith("postgresql://"):
@@ -46,7 +46,5 @@ class Settings(BaseSettings):
             return url
             
         return f"postgresql+asyncpg://{self.POSTGRES_USER}:{password_quoted}@{host}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
-
-
 
 settings = Settings()

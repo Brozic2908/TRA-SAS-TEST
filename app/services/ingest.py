@@ -255,6 +255,7 @@ async def seed_all_data():
                 session.add(doc_obj)
         await session.commit()
 
+        articles_to_seed = list(PROCESSED_ARTICLES)
         raw_dir = os.path.join("data", "raw")
         if os.path.exists(raw_dir):
             for file_name in os.listdir(raw_dir):
@@ -279,11 +280,11 @@ async def seed_all_data():
                         )
                         parsed = parse_articles_from_text(text, law_num)
                         for art in parsed[:5]:
-                            PROCESSED_ARTICLES.append(art)
+                            articles_to_seed.append(art)
 
         logger.info("2. Đang lưu Điều/Khoản & tính toán Vector Embedding...")
         seeded_count = 0
-        for art in PROCESSED_ARTICLES:
+        for art in articles_to_seed:
             stmt = select(CustomsDocument).where(
                 CustomsDocument.law_number == art["law_number"],
                 CustomsDocument.article_number == art["article_number"]
