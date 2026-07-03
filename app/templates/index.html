@@ -1,0 +1,1000 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trợ lý AI Hải quan Việt Nam - RAG Dashboard</title>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- React & ReactDOM (Production) -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <!-- Babel Standalone to compile JSX in browser -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        :root {
+            --bg-main: #0b0f19;
+            --bg-sidebar: #111827;
+            --bg-chat: #0f172a;
+            --glass-bg: rgba(30, 41, 59, 0.45);
+            --glass-border: rgba(255, 255, 255, 0.06);
+            --text-main: #f8fafc;
+            --text-muted: #64748b;
+            --text-body: #cbd5e1;
+            --accent-primary: #009fe3;
+            --accent-secondary: #0082be;
+            --accent-gradient: linear-gradient(135deg, #009fe3 0%, #005691 100%);
+            --accent-glow: rgba(0, 159, 227, 0.35);
+            --danger: #f43f5e;
+            --success: #10b981;
+            --warning: #fbbf24;
+            --chat-bubble-user: #009fe3;
+            --chat-bubble-bot: #1e293b;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background-color: var(--bg-main);
+            color: var(--text-main);
+            height: 100vh;
+            overflow: hidden;
+            display: flex;
+        }
+
+        #root {
+            width: 100%;
+            height: 100%;
+            display: flex;
+        }
+
+        /* Dashboard Layout */
+        .dashboard-container {
+            display: flex;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+        }
+
+        /* Left Navigation Sidebar */
+        .sidebar {
+            width: 300px;
+            background-color: var(--bg-sidebar);
+            border-right: 1px solid var(--glass-border);
+            display: flex;
+            flex-direction: column;
+            padding: 24px;
+            justify-content: space-between;
+        }
+
+        .logo-section {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 32px;
+        }
+
+        .logo-icon {
+            width: 42px;
+            height: 42px;
+            background: var(--accent-gradient);
+            border-radius: 12px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 18px;
+            color: #fff;
+            box-shadow: 0 0 15px var(--accent-glow);
+        }
+
+        .logo-text h1 {
+            font-size: 18px;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            color: var(--text-main);
+        }
+
+        .logo-text p {
+            font-size: 11px;
+            color: var(--text-muted);
+            font-weight: 500;
+        }
+
+        .history-section {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            overflow-y: auto;
+            margin-bottom: 24px;
+        }
+
+        .history-title {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-muted);
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .history-item {
+            padding: 12px 16px;
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid transparent;
+            font-size: 13.5px;
+            color: var(--text-body);
+            cursor: pointer;
+            transition: all 0.2s ease;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .history-item.active {
+            background: rgba(99, 102, 241, 0.08);
+            border-color: rgba(99, 102, 241, 0.3);
+            color: #fff;
+            font-weight: 500;
+        }
+
+        .history-item:hover:not(.active) {
+            background: rgba(255, 255, 255, 0.05);
+            color: #fff;
+        }
+
+        .system-info-box {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--glass-border);
+            border-radius: 16px;
+            padding: 16px;
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 6px;
+        }
+
+        .info-row span:last-child {
+            color: var(--text-body);
+            font-weight: 500;
+        }
+
+        /* Chat Panel Middle */
+        .chat-container {
+            flex: 1;
+            background-color: var(--bg-chat);
+            display: flex;
+            flex-direction: column;
+            position: relative;
+        }
+
+        .chat-header {
+            padding: 18px 30px;
+            border-bottom: 1px solid var(--glass-border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: rgba(15, 23, 42, 0.4);
+            backdrop-filter: blur(8px);
+        }
+
+        .chat-bot-status {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .status-badge {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            background: rgba(16, 185, 129, 0.08);
+            border: 1px solid rgba(16, 185, 129, 0.2);
+            color: var(--success);
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+
+        .status-dot-pulse {
+            width: 6px;
+            height: 6px;
+            background: var(--success);
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
+            70% { box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 12px;
+        }
+
+        .icon-btn {
+            width: 40px;
+            height: 40px;
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--glass-border);
+            color: var(--text-body);
+            cursor: pointer;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            transition: all 0.2s ease;
+        }
+
+        .icon-btn:hover {
+            background: rgba(255, 255, 255, 0.08);
+            color: #fff;
+            border-color: rgba(255, 255, 255, 0.2);
+        }
+
+        .icon-btn.active {
+            background: rgba(99, 102, 241, 0.15);
+            border-color: var(--accent-primary);
+            color: #fff;
+        }
+
+        /* Message Box Area */
+        .message-list {
+            flex: 1;
+            padding: 30px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+        }
+
+        .message-wrapper {
+            display: flex;
+            gap: 16px;
+            max-width: 80%;
+        }
+
+        .message-wrapper.user {
+            align-self: flex-end;
+            flex-direction: row-reverse;
+        }
+
+        .message-wrapper.bot {
+            align-self: flex-start;
+        }
+
+        .avatar-box {
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 14px;
+            color: #fff;
+            flex-shrink: 0;
+        }
+
+        .message-wrapper.user .avatar-box {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .message-wrapper.bot .avatar-box {
+            background: var(--accent-gradient);
+            box-shadow: 0 0 10px rgba(99, 102, 241, 0.2);
+        }
+
+        .bubble {
+            padding: 16px 20px;
+            border-radius: 16px;
+            font-size: 14.5px;
+            line-height: 1.6;
+            color: var(--text-body);
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+
+        .message-wrapper.user .bubble {
+            background: var(--chat-bubble-user);
+            color: #fff;
+            border-top-right-radius: 2px;
+            box-shadow: 0 10px 15px -3px rgba(99, 102, 241, 0.2);
+        }
+
+        .message-wrapper.bot .bubble {
+            background: var(--chat-bubble-bot);
+            border: 1px solid var(--glass-border);
+            border-top-left-radius: 2px;
+        }
+
+        /* Markdown elements styling inside bubble */
+        .markdown-container p {
+            margin-bottom: 10px;
+        }
+        .markdown-container p:last-child {
+            margin-bottom: 0;
+        }
+        .markdown-container ul {
+            margin-left: 20px;
+            margin-bottom: 10px;
+        }
+        .markdown-container li {
+            margin-bottom: 6px;
+        }
+        .markdown-container strong {
+            color: #e9d5ff; /* Soft purple for bold tags */
+            font-weight: 600;
+        }
+
+        /* Input Control Container */
+        .bottom-control-panel {
+            padding: 24px 30px 30px 30px;
+            background: linear-gradient(to top, var(--bg-chat) 70%, transparent);
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .suggestions-bar {
+            display: flex;
+            gap: 10px;
+            overflow-x: auto;
+            padding-bottom: 4px;
+        }
+
+        .suggestion-chip {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--glass-border);
+            color: var(--text-muted);
+            padding: 8px 14px;
+            border-radius: 9999px;
+            font-size: 12.5px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            white-space: nowrap;
+        }
+
+        .suggestion-chip:hover {
+            background: rgba(99, 102, 241, 0.1);
+            border-color: var(--accent-primary);
+            color: #fff;
+        }
+
+        .chat-input-wrapper {
+            background: rgba(15, 23, 42, 0.8);
+            border: 1px solid var(--glass-border);
+            border-radius: 18px;
+            padding: 10px 10px 10px 22px;
+            display: flex;
+            align-items: center;
+            transition: all 0.2s ease;
+        }
+
+        .chat-input-wrapper:focus-within {
+            border-color: var(--accent-primary);
+            box-shadow: 0 0 18px var(--accent-glow);
+        }
+
+        .main-textarea {
+            flex: 1;
+            background: transparent;
+            border: none;
+            outline: none;
+            color: var(--text-main);
+            font-size: 14.5px;
+            font-family: inherit;
+            resize: none;
+            height: 24px;
+            line-height: 24px;
+        }
+
+        .submit-circle-btn {
+            width: 40px;
+            height: 40px;
+            border-radius: 12px;
+            background: var(--accent-gradient);
+            border: none;
+            color: #fff;
+            cursor: pointer;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 14px;
+            transition: transform 0.2s;
+        }
+
+        .submit-circle-btn:hover {
+            transform: scale(1.05);
+        }
+
+        .submit-circle-btn:disabled {
+            background: rgba(255, 255, 255, 0.05);
+            color: var(--text-muted);
+            cursor: not-allowed;
+        }
+
+        /* Right Inspector Panel */
+        .inspector-panel {
+            width: 380px;
+            background-color: var(--bg-sidebar);
+            border-left: 1px solid var(--glass-border);
+            display: flex;
+            flex-direction: column;
+            padding: 24px;
+            overflow-y: auto;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .inspector-panel.collapsed {
+            width: 0;
+            padding: 0;
+            border-left: none;
+            overflow: hidden;
+        }
+
+        .panel-section {
+            margin-bottom: 30px;
+        }
+
+        .panel-section-title {
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-muted);
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: 600;
+        }
+
+        /* Graph flow styles */
+        .diagram-container {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            padding: 16px;
+            background: rgba(255, 255, 255, 0.01);
+            border: 1px solid var(--glass-border);
+            border-radius: 16px;
+        }
+
+        .diagram-node {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 16px;
+            border-radius: 12px;
+            background: rgba(15, 23, 42, 0.3);
+            border: 1px solid var(--glass-border);
+            font-size: 13.5px;
+            color: var(--text-muted);
+            transition: all 0.2s ease;
+        }
+
+        .diagram-node.active {
+            background: rgba(99, 102, 241, 0.1);
+            border-color: var(--accent-primary);
+            color: #818cf8;
+            font-weight: 500;
+            box-shadow: 0 0 10px rgba(99, 102, 241, 0.15);
+        }
+
+        .diagram-node.completed {
+            background: rgba(16, 185, 129, 0.06);
+            border-color: rgba(16, 185, 129, 0.2);
+            color: var(--success);
+        }
+
+        .node-step-num {
+            font-size: 10px;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.05);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: var(--text-muted);
+        }
+
+        .diagram-node.active .node-step-num {
+            background: var(--accent-primary);
+            color: #fff;
+        }
+
+        .diagram-node.completed .node-step-num {
+            background: var(--success);
+            color: #fff;
+        }
+
+        .diagram-arrow {
+            display: flex;
+            justify-content: center;
+            color: rgba(255, 255, 255, 0.05);
+            font-size: 11px;
+            margin: 2px 0;
+        }
+
+        /* Document Viewer Styling */
+        .reference-doc-card {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--glass-border);
+            border-radius: 14px;
+            padding: 16px;
+            font-size: 13px;
+            line-height: 1.55;
+            color: var(--text-body);
+            margin-bottom: 12px;
+            transition: all 0.2s ease;
+        }
+
+        .reference-doc-card:hover {
+            border-color: rgba(255, 255, 255, 0.12);
+            background: rgba(255, 255, 255, 0.03);
+        }
+
+        .doc-card-meta {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 10.5px;
+            font-weight: 600;
+            color: var(--accent-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            margin-bottom: 8px;
+            padding-bottom: 6px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+        }
+
+        .doc-card-source-tag {
+            background: rgba(168, 85, 247, 0.1);
+            padding: 2px 8px;
+            border-radius: 4px;
+        }
+
+        .doc-card-source-tag.web {
+            background: rgba(99, 102, 241, 0.1);
+            color: #818cf8;
+        }
+
+        .empty-doc-info {
+            text-align: center;
+            padding: 30px 20px;
+            color: var(--text-muted);
+            font-size: 13px;
+            border: 1px dashed var(--glass-border);
+            border-radius: 14px;
+            background: rgba(255, 255, 255, 0.01);
+        }
+
+        /* typing dots indicator inside bubbles */
+        .typing-loader {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            padding: 4px 6px;
+        }
+        .typing-loader span {
+            width: 6px;
+            height: 6px;
+            background-color: var(--text-muted);
+            border-radius: 50%;
+            animation: typingBounce 1.4s infinite ease-in-out both;
+        }
+        .typing-loader span:nth-child(1) { animation-delay: -0.32s; }
+        .typing-loader span:nth-child(2) { animation-delay: -0.16s; }
+
+        @keyframes typingBounce {
+            0%, 80%, 100% { transform: scale(0); }
+            40% { transform: scale(1); }
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // Custom Component giải nén Markdown và hiển thị đẹp hơn
+        const MarkdownText = ({ text }) => {
+            if (!text) return null;
+            
+            // Xử lý xuống dòng để phân tách thành các đoạn văn
+            const paragraphs = text.split('\n');
+            
+            return (
+                <div className="markdown-container">
+                    {paragraphs.map((para, pIdx) => {
+                        const trimmed = para.trim();
+                        if (!trimmed) return <div key={pIdx} style={{ height: '8px' }} />;
+                        
+                        // Xử lý thẻ bullet point (* )
+                        if (trimmed.startsWith('* ')) {
+                            const bulletContent = trimmed.substring(2);
+                            return (
+                                <ul key={pIdx}>
+                                    <li>{renderTextWithBold(bulletContent)}</li>
+                                </ul>
+                            );
+                        }
+
+                        // Xử lý danh sách đánh số (ví dụ: 1. , 2. )
+                        const numListRegex = /^(\d+)\.\s(.*)/;
+                        const matchNum = trimmed.match(numListRegex);
+                        if (matchNum) {
+                            return (
+                                <p key={pIdx} style={{ paddingLeft: '8px', marginY: '4px' }}>
+                                    <strong style={{ color: '#818cf8', marginRight: '6px' }}>{matchNum[1]}.</strong>
+                                    {renderTextWithBold(matchNum[2])}
+                                </p>
+                            );
+                        }
+                        
+                        // Dòng văn bản thường
+                        return <p key={pIdx}>{renderTextWithBold(trimmed)}</p>;
+                    })}
+                </div>
+            );
+        };
+
+        // Hàm parse thẻ **in đậm** thành thẻ <strong>
+        const renderTextWithBold = (text) => {
+            const boldRegex = /\*\*(.*?)\*\*/g;
+            const parts = [];
+            let lastIndex = 0;
+            let match;
+            
+            while ((match = boldRegex.exec(text)) !== null) {
+                if (match.index > lastIndex) {
+                    parts.push(text.substring(lastIndex, match.index));
+                }
+                parts.push(<strong key={match.index}>{match[1]}</strong>);
+                lastIndex = boldRegex.lastIndex;
+            }
+            
+            if (lastIndex < text.length) {
+                parts.push(text.substring(lastIndex));
+            }
+            
+            return parts.length > 0 ? parts : text;
+        };
+
+        const App = () => {
+            const [messages, setMessages] = useState([
+                {
+                    id: 1,
+                    sender: 'bot',
+                    text: 'Xin chào! Tôi là Trợ lý AI chuyên ngành Hải quan Việt Nam. Tôi có thể giúp bạn giải đáp các thủ tục hành chính, quy chế xuất nhập khẩu, tra cứu biểu thuế và giải quyết các vướng mắc về thủ tục VNACCS.\nBạn cần tôi hỗ trợ thông tin gì hôm nay?',
+                    trajectory: ['retrieve_node', 'grade_documents_node', 'generate_node'],
+                    documents: []
+                }
+            ]);
+            
+            const [inputValue, setInputValue] = useState('');
+            const [isTyping, setIsTyping] = useState(false);
+            const [selectedMessage, setSelectedMessage] = useState(1);
+            const [showInspector, setShowInspector] = useState(true);
+            
+            const messageListRef = useRef(null);
+
+            // Tự động cuộn xuống cuối
+            useEffect(() => {
+                if (messageListRef.current) {
+                    messageListRef.current.scrollTop = messageListRef.current.scrollHeight;
+                }
+            }, [messages, isTyping]);
+
+            const currentMessage = messages.find(m => m.id === selectedMessage) || messages[messages.length - 1];
+
+            const handleSend = async (text) => {
+                const queryText = text || inputValue;
+                if (!queryText.trim()) return;
+
+                const userMsgId = Date.now();
+                setMessages(prev => [...prev, {
+                    id: userMsgId,
+                    sender: 'user',
+                    text: queryText
+                }]);
+                
+                setInputValue('');
+                setIsTyping(true);
+
+                try {
+                    // API endpoint động hỗ trợ Live Server
+                    const apiHost = window.location.port === '5500' ? 'http://127.0.0.1:8000' : '';
+                    const response = await fetch(`${apiHost}/api/v1/query`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ question: queryText })
+                    });
+                    
+                    if (!response.ok) {
+                        let errorDetail = 'Lỗi hệ thống không xác định.';
+                        try {
+                            const errData = await response.json();
+                            if (errData && errData.detail) {
+                                errorDetail = errData.detail;
+                            }
+                        } catch(e) {}
+                        throw new Error(`Đã xảy ra lỗi máy chủ (HTTP ${response.status}): ${errorDetail}`);
+                    }
+                    
+                    const data = await response.json();
+                    
+                    // Xác định Trajectory của LangGraph
+                    const steps = ['retrieve_node', 'grade_documents_node'];
+                    if (data.search_fallback) {
+                        steps.push('web_search_node');
+                    }
+                    steps.push('generate_node');
+
+                    const botMsgId = Date.now() + 1;
+                    setMessages(prev => [...prev, {
+                        id: botMsgId,
+                        sender: 'bot',
+                        text: data.generation,
+                        documents: data.documents || [],
+                        trajectory: steps,
+                        fallback: data.search_fallback
+                    }]);
+                    setSelectedMessage(botMsgId);
+                } catch (error) {
+                    const botMsgId = Date.now() + 1;
+                    setMessages(prev => [...prev, {
+                        id: botMsgId,
+                        sender: 'bot',
+                        text: error.message || 'Đã xảy ra lỗi kết nối với máy chủ API Hải quan. Hãy chắc chắn rằng backend đang chạy trên cổng 8000.',
+                        documents: [],
+                        trajectory: ['retrieve_node']
+                    }]);
+                    setSelectedMessage(botMsgId);
+                } finally {
+                    setIsTyping(false);
+                }
+            };
+
+            const suggestions = [
+                "Hồ sơ hải quan gồm những chứng từ gì?",
+                "Quy trình xác định xuất xứ hàng hóa?",
+                "Khai báo tờ khai VNACCS thế nào?",
+                "Bạn là ai?"
+            ];
+
+            return (
+                <div className="dashboard-container">
+                    {/* Left Sidebar */}
+                    <div className="sidebar">
+                        <div>
+                            <div className="logo-section">
+                                <div className="logo-icon" style={{ background: 'var(--accent-primary)', borderRadius: '50%' }}>
+                                    <i className="fa-solid fa-globe"></i>
+                                </div>
+                                <div className="logo-text">
+                                    <h1>TRA-SAS <span style={{color: 'var(--accent-secondary)'}}>AI</span></h1>
+                                    <p style={{ fontSize: '10px', fontStyle: 'italic', color: 'var(--text-muted)', marginTop: '2px' }}>
+                                        "The time is faster than you think"
+                                    </p>
+                                </div>
+                            </div>
+
+                            <div className="history-section">
+                                <div className="history-title">Lịch sử hội thoại</div>
+                                <div className="history-item active">
+                                    <i className="fa-regular fa-comments"></i>
+                                    <span>Tư vấn xuất nhập khẩu</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="system-info-box">
+                            <div className="info-row">
+                                <span>LLM Grader:</span>
+                                <span>Gemini Flash</span>
+                            </div>
+                            <div className="info-row">
+                                <span>LLM Generator:</span>
+                                <span>Gemini Flash</span>
+                            </div>
+                            <div className="info-row">
+                                <span>Vector DB:</span>
+                                <span>PostgreSQL</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Chat Panel Middle */}
+                    <div className="chat-container">
+                        <div className="chat-header">
+                            <div className="chat-bot-status">
+                                <div className="avatar-box" style={{background: 'var(--accent-gradient)', width: '32px', height: '32px', fontSize: '12px'}}>
+                                    <i className="fa-solid fa-robot"></i>
+                                </div>
+                                <div>
+                                    <h3 style={{fontSize: '14.5px', fontWeight: '600'}}>Trợ lý AI Hải quan</h3>
+                                    <div className="status-badge" style={{marginTop: '2px', padding: '2px 8px'}}>
+                                        <span className="status-dot-pulse"></span>
+                                        Trực tuyến
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="header-actions">
+                                <button 
+                                    className={`icon-btn ${showInspector ? 'active' : ''}`}
+                                    onClick={() => setShowInspector(!showInspector)}
+                                    title="Xem luồng chạy LangGraph & tài liệu"
+                                >
+                                    <i className="fa-solid fa-chart-network"></i>
+                                    <i className="fa-solid fa-diagram-project"></i>
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Message list area */}
+                        <div className="message-list" ref={messageListRef}>
+                            {messages.map((msg) => (
+                                <div 
+                                    key={msg.id} 
+                                    className={`message-wrapper ${msg.sender}`}
+                                    onClick={() => msg.sender === 'bot' && setSelectedMessage(msg.id)}
+                                    style={{ cursor: msg.sender === 'bot' ? 'pointer' : 'default' }}
+                                >
+                                    <div className="avatar-box">
+                                        {msg.sender === 'user' ? <i className="fa-regular fa-user"></i> : <i className="fa-solid fa-robot"></i>}
+                                    </div>
+                                    <div className="bubble">
+                                        {msg.sender === 'bot' ? (
+                                            <MarkdownText text={msg.text} />
+                                        ) : (
+                                            msg.text
+                                        )}
+                                    </div>
+                                </div>
+                            ))}
+
+                            {isTyping && (
+                                <div className="message-wrapper bot">
+                                    <div className="avatar-box">
+                                        <i className="fa-solid fa-robot"></i>
+                                    </div>
+                                    <div className="bubble">
+                                        <div className="typing-loader">
+                                            <span></span>
+                                            <span></span>
+                                            <span></span>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Input Area Panel */}
+                        <div className="bottom-control-panel">
+                            <div className="suggestions-bar">
+                                {suggestions.map((s, idx) => (
+                                    <div key={idx} className="suggestion-chip" onClick={() => handleSend(s)}>
+                                        {s}
+                                    </div>
+                                ))}
+                            </div>
+
+                            <div className="chat-input-wrapper">
+                                <input 
+                                    type="text" 
+                                    className="main-textarea"
+                                    placeholder="Nhập nội dung thắc mắc thủ tục Hải quan..."
+                                    value={inputValue}
+                                    onChange={(e) => setInputValue(e.target.value)}
+                                    onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+                                    disabled={isTyping}
+                                />
+                                <button className="submit-circle-btn" onClick={() => handleSend()} disabled={isTyping || !inputValue.trim()}>
+                                    <i className="fa-solid fa-arrow-up"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Right Inspector Panel */}
+                    <div className={`inspector-panel ${showInspector ? '' : 'collapsed'}`}>
+                        <div className="panel-section">
+                            <div className="panel-section-title">
+                                <i className="fa-solid fa-circle-nodes"></i>
+                                Quỹ đạo chạy Đồ thị (LangGraph)
+                            </div>
+                            <div className="diagram-container">
+                                <div className={`diagram-node ${currentMessage?.trajectory?.includes('retrieve_node') ? 'completed' : ''}`}>
+                                    <span>retrieve_node (Tìm Vector DB)</span>
+                                    <span className="node-step-num">1</span>
+                                </div>
+                                <div className="diagram-arrow"><i className="fa-solid fa-arrow-down"></i></div>
+                                
+                                <div className={`diagram-node ${currentMessage?.trajectory?.includes('grade_documents_node') ? 'completed' : ''}`}>
+                                    <span>grade_documents (Chấm điểm)</span>
+                                    <span className="node-step-num">2</span>
+                                </div>
+                                <div className="diagram-arrow"><i className="fa-solid fa-arrow-down"></i></div>
+
+                                {currentMessage?.trajectory?.includes('web_search_node') && (
+                                    React.Fragment ? (
+                                        <React.Fragment>
+                                            <div className="diagram-node active" style={{borderColor: 'var(--warning)', color: 'var(--warning)', background: 'rgba(251, 191, 36, 0.05)'}}>
+                                                <span>web_search_node (Tavily)</span>
+                                                <span className="node-step-num" style={{background: 'var(--warning)'}}>!</span>
+                                            </div>
+                                            <div className="diagram-arrow"><i className="fa-solid fa-arrow-down"></i></div>
+                                        </React.Fragment>
+                                    ) : (
+                                        <div>
+                                            <div className="diagram-node active" style={{borderColor: 'var(--warning)', color: 'var(--warning)', background: 'rgba(251, 191, 36, 0.05)', marginBottom: '8px'}}>
+                                                <span>web_search_node (Tavily)</span>
+                                                <span className="node-step-num" style={{background: 'var(--warning)'}}>!</span>
+                                            </div>
+                                            <div className="diagram-arrow" style={{marginBottom: '8px'}}><i className="fa-solid fa-arrow-down"></i></div>
+                                        </div>
+                                    )
+                                )}
+
+                                <div className={`diagram-node ${currentMessage?.trajectory?.includes('generate_node') ? 'completed' : ''}`}>
+                                    <span>generate_node (Tổng hợp LLM)</span>
+                                    <span className="node-step-num">3</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="panel-section">
+                            <div className="panel-section-title">
+                                <i className="fa-regular fa-folder-open"></i>
+                                Tài liệu tham chiếu ({currentMessage?.documents?.length || 0})
+                            </div>
+                            <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
+                                {currentMessage?.documents && currentMessage.documents.length > 0 ? (
+                                    currentMessage.documents.map((doc, idx) => (
+                                        <div key={idx} className="reference-doc-card">
+                                            <div className="doc-card-meta">
+                                                <span>NGUỒN DỮ LIỆU {idx + 1}</span>
+                                                <span className={`doc-card-source-tag ${currentMessage.fallback ? 'web' : ''}`}>
+                                                    {currentMessage.fallback ? 'Web Search' : 'pgvector'}
+                                                </span>
+                                            </div>
+                                            <div style={{whiteSpace: 'pre-line'}}>{doc}</div>
+                                        </div>
+                                    ))
+                                ) : (
+                                    <div className="empty-doc-info">
+                                        Không có tài liệu tham chiếu nào được trích xuất cho phản hồi này.
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
