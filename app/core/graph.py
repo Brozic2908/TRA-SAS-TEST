@@ -218,11 +218,68 @@ async def generate_node(state: GraphState) -> Dict[str, Any]:
         logger.warning(f"Lỗi/Timeout LLM Generator ({type(e).__name__}: {str(e)}). Tự động chuyển sang Extractive Fallback!")
         return {"generation": build_extractive_fallback()}
 
+async def check_hallucination_node(state: GraphState) -> Dict[str, Any]:
+    """Self-RAG: LLM tự kiểm tra câu trả lời có bịa đặt so với tài liệu không."""
+    question = state.get("question")
+    documents = state.get("documents", [])
+    generation = state.get("generation", "")
+
+    # Bỏ qua nếu không có tài liệu hoặc không có API key (offline fallback)
+    has_llm_key = bool(settings.GROQ_API_KEY or settings.GOOGLE_API_KEY or settings.OPENROUTER_API_KEY)
+    if not documents or not has_llm_key or getattr(settings, "OFFLINE_MODE", False):
+        logger.info("Bỏ qua check_hallucination_node (offline hoặc không có tài liệu).")
+        return {"hallucination_checked": True}
+
+    try:
+        grader_llm = get_grader_llm()
+        hal_grader = grader_llm.with_structured_output(HallucinationGrader)
+
+        hal_prompt = ChatPromptTemplate.from_messages([
+            ("system",
+             "Bạn là kiểm duyệt viên chống bịa đặt (Anti-Hallucination) cho hệ thống tư vấn pháp lý Hải quan. "
+             "Nhiệm vụ: kiểm tra xem câu trả lời có chứa thông tin KHÔNG CÓ TRONG tài liệu tham khảo không. "
+             "Nếu câu trả lời chỉ dùng thông tin từ tài liệu và thừa nhận không biết khi thiếu dữ liệu → is_hallucination=False. "
+             "Nếu câu trả lời thêm thông tin bịa đặt, số liệu, điều luật không có trong tài liệu → is_hallucination=True."),
+            ("human",
+             "TÀI LIỆU THAM KHẢO:\n{documents}\n\nCÂU HỎI: {question}\n\nCÂU TRẢ LỜI CẦN KIỂM TRA:\n{generation}")
+        ])
+
+        hal_chain = hal_prompt | hal_grader
+        docs_text = "\n---\n".join(documents)
+
+        result = await asyncio.wait_for(
+            hal_chain.ainvoke({"documents": docs_text, "question": question, "generation": generation}),
+            timeout=4.0
+        )
+
+        if result.is_hallucination:
+            logger.error(f"[HALLUCINATION DETECTED]: {result.reason}")
+            await notify_admin(f"Hallucination phát hiện cho câu hỏi: '{question}' — Lý do: {result.reason}")
+            from app.core.exceptions import HallucinationError
+            raise HallucinationError(f"Câu trả lời chứa thông tin bịa đặt: {result.reason}")
+
+        logger.info("check_hallucination_node: Câu trả lời hợp lệ, không có bịa đặt.")
+        return {"hallucination_checked": True}
+
+    except Exception as e:
+        if "HallucinationError" in type(e).__name__:
+            raise
+        logger.warning(f"Lỗi/Timeout Hallucination Grader ({str(e)}), bỏ qua và chấp nhận kết quả.")
+        return {"hallucination_checked": True}
+
+
 def decide_after_route(state: GraphState) -> str:
     """Nếu đã có generation (off-topic), nhảy thẳng generate_node (sẽ skip)."""
     if state.get("is_off_topic") is True or len(state.get("generation", "")) > 0:
         return "generate_node"
     return "retrieve_node"
+
+
+def decide_after_generate(state: GraphState) -> str:
+    """Self-RAG routing: Nếu off-topic hoặc không có generation thì END, ngược lại kiểm tra hallucination."""
+    if state.get("is_off_topic") is True or not state.get("generation"):
+        return END
+    return "check_hallucination_node"
 
 workflow = StateGraph(GraphState)
 
@@ -230,6 +287,7 @@ workflow.add_node("route_question_node", route_question_node)
 workflow.add_node("retrieve_node", retrieve_node)
 workflow.add_node("grade_documents_node", grade_documents_node)
 workflow.add_node("generate_node", generate_node)
+workflow.add_node("check_hallucination_node", check_hallucination_node)
 
 workflow.add_edge(START, "route_question_node")
 workflow.add_conditional_edges(
@@ -242,7 +300,14 @@ workflow.add_conditional_edges(
 )
 workflow.add_edge("retrieve_node", "grade_documents_node")
 workflow.add_edge("grade_documents_node", "generate_node")
-
-workflow.add_edge("generate_node", END)
+workflow.add_conditional_edges(
+    "generate_node",
+    decide_after_generate,
+    {
+        "check_hallucination_node": "check_hallucination_node",
+        END: END
+    }
+)
+workflow.add_edge("check_hallucination_node", END)
 
 graph = workflow.compile()

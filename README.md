@@ -1,6 +1,6 @@
 # 📜 Trợ Lý AI Hỏi - Đáp Văn Bản Pháp Luật Hải Quan Việt Nam (Agentic RAG)
 
-Hệ thống Full-stack Chatbot tư vấn thủ tục Hải quan Việt Nam xây dựng trên kiến trúc **Agentic Corrective RAG (LangGraph)**, kết hợp cơ sở dữ liệu quan hệ **PostgreSQL (SQL)**, **pgvector** cho tìm kiếm tương đồng vector và bộ tìm kiếm từ vựng **BM25**.
+Hệ thống Full-stack Chatbot tư vấn thủ tục Hải quan Việt Nam xây dựng trên kiến trúc **Agentic Self-RAG (LangGraph)**, kết hợp cơ sở dữ liệu quan hệ **PostgreSQL (SQL)**, **pgvector** cho tìm kiếm tương đồng vector và bộ tìm kiếm từ vựng **BM25**.
 
 ---
 
@@ -16,11 +16,13 @@ graph TD
     OffTopicAns --> End([Kết thúc: Trả về JSON & Citation Badges])
     
     Guard -- Câu hỏi nghiệp vụ Hải quan --> Retrieve[Nút 2: retrieve_node<br/>pgvector / BM25 Search]
-    Retrieve --> Grade[Nút 3: grade_documents_node<br/>LLM Chấm điểm độ liên quan]
+    Retrieve --> Grade[Nút 3: grade_documents_node<br/>Self-grading: LLM chấm điểm độ liên quan]
     
     Grade --> Generate[Nút 4: generate_node<br/>Tổng hợp câu trả lời & Cảnh báo Hiệu lực]
+    Generate --> HalCheck[Nút 5: check_hallucination_node<br/>Self-check: LLM kiểm tra bịa đặt]
     
-    Generate --> End
+    HalCheck -- is_hallucination=False --> End
+    HalCheck -- is_hallucination=True --> HalErr[🚫 HallucinationError<br/>Notify Admin & Dừng xử lý]
 ```
 
 ---
@@ -49,10 +51,11 @@ graph TD
   - **Online Mode:** Sử dụng toán tử Cosine (`<=>`) của pgvector trên PostgreSQL với vector embedding query 3072 chiều.
   - **Offline / Fallback Mode:** Tự động chuyển sang thuật toán **BM25 Lexical Search** thuần Python khi mất mạng hoặc không có Gemini API key.
 
-#### 3️⃣ **`grade_documents_node` (Kiểm duyệt độ liên quan bằng LLM)**
+#### 3️⃣ **`grade_documents_node` (Self-grading: LLM tự đánh giá độ liên quan)**
 - **Nhiệm vụ:** LLM đóng vai kiểm duyệt viên đánh giá điểm liên quan (`relevance_score` từ 0.0 đến 1.0) của từng tài liệu được truy hồi.
 - **Xử lý:**
   - Giữ lại các tài liệu có điểm $\ge 0.7$.
+  - Không tra mạng hay tìm kiếm nguồn ngoài — đúng với mô hình closed-domain.
 
 #### 4️⃣ **`generate_node` (Sinh câu trả lời bám ngữ cảnh & Trích dẫn)**
 - **Nhiệm vụ:** Tổng hợp câu trả lời tư vấn pháp lý hoàn chỉnh.
@@ -66,6 +69,13 @@ graph TD
   - Priority 2: **Groq Llama 3.3 70B** ➔ Tự động fallback sang **Llama 3.1 8B Instant** nếu chạm rate limit HTTP 429
   - Priority 3: **Google Gemini 2.0 Flash**
   - Priority 4: **Extractive RAG Fallback** (Hoạt động 100% khi mất mạng)
+
+#### 5️⃣ **`check_hallucination_node` (Self-RAG: Tự kiểm tra bịa đặt)**
+- **Nhiệm vụ:** LLM tự đối chiếu câu trả lời vừa sinh ra với tài liệu gốc để phát hiện bịa đặt.
+- **Xử lý:**
+  - Nếu `is_hallucination=False`: Câu trả lời hợp lệ, trả về kết quả cho API.
+  - Nếu `is_hallucination=True`: Bắn `HallucinationError`, gửi cảnh báo Admin và dừng xử lý — không trả về thông tin sai lệch cho doanh nghiệp.
+  - **Offline / Không có API key:** Tự động bỏ qua kiểm tra, chấp nhận kết quả Extractive RAG.
 
 ---
 

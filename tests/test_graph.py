@@ -33,9 +33,9 @@ class MockRunnable(Runnable):
 @pytest.mark.asyncio
 async def test_graph_success_trajectory():
     """
-    Test kịch bản: Tìm kiếm nội bộ trả về tài liệu hợp lệ -> Đánh giá liên quan đạt điểm cao (>0.7) 
-    -> Đi thẳng tới sinh câu trả lời -> Hoàn thành không có bịa đặt.
-    Quỹ đạo mong đợi: retrieve -> grade -> generate.
+    Test kịch bản Self-RAG: Tìm kiếm nội bộ trả về tài liệu hợp lệ -> Đánh giá liên quan đạt điểm cao (>0.7)
+    -> Sinh câu trả lời -> Kiểm tra hallucination pass (is_hallucination=False) -> Hoàn thành.
+    Quỹ đạo mong đợi: retrieve -> grade -> generate -> check_hallucination -> END.
     """
     with patch("app.core.graph.similarity_search_structured", new_callable=AsyncMock) as mock_sim_search, \
          patch("app.core.graph.get_grader_llm") as mock_get_grader, \
@@ -54,15 +54,16 @@ async def test_graph_success_trajectory():
         # 2. Giả lập Grader LLM trả về relevance_score = 0.9 (hợp lệ)
         mock_grader_chain = MockRunnable(MockBatchDocumentGrader([MockDocumentGrade(index=0, relevance_score=0.9)]))
         
-        # 3. Giả lập Generator LLM trả về câu trả lời sinh ra (Mock dưới dạng Runnable)
+        # 3. Giả lập Generator LLM trả về câu trả lời sinh ra
         mock_response = MagicMock()
         mock_response.content = "Câu trả lời đúng chuẩn hải quan."
         mock_get_generator.return_value = MockRunnable(mock_response)
         
-        # 4. Giả lập Hallucination check: is_hallucination = False
-        mock_hal_chain = MockRunnable(MockHallucinationGrader(is_hallucination=False, reason=""))
+        # 4. Self-RAG Hallucination check: is_hallucination = False (câu trả lời hợp lệ)
+        mock_hal_chain = MockRunnable(MockHallucinationGrader(is_hallucination=False, reason="Câu trả lời bám sát tài liệu."))
         
-        # Thiết lập side_effect cho hai lần gọi with_structured_output khác nhau
+        # Lần gọi with_structured_output thứ 1: BatchDocumentGrader (grade_documents_node)
+        # Lần gọi with_structured_output thứ 2: HallucinationGrader (check_hallucination_node)
         mock_get_grader.return_value.with_structured_output.side_effect = [mock_grader_chain, mock_hal_chain]
         
         # Khởi chạy đồ thị
@@ -77,6 +78,7 @@ async def test_graph_success_trajectory():
         # Xác thực kết quả sinh ra
         assert result["generation"] == "Câu trả lời đúng chuẩn hải quan."
         assert len(result["documents"]) == 1
+        assert result.get("hallucination_checked") is True
         mock_sim_search.assert_called_once()
 
 @pytest.mark.asyncio
@@ -141,8 +143,8 @@ async def test_graph_database_error_handling():
 @pytest.mark.asyncio
 async def test_graph_hallucination_error_handling():
     """
-    Test kịch bản: Câu trả lời chứa thông tin bịa đặt (Hallucination) 
-    -> Đồ thị bắn HallucinationError và dừng xử lý.
+    Test kịch bản Self-RAG: Câu trả lời chứa thông tin bịa đặt (Hallucination)
+    -> check_hallucination_node phát hiện -> Đồ thị bắn HallucinationError và dừng xử lý.
     """
     with patch("app.core.graph.similarity_search_structured", new_callable=AsyncMock) as mock_sim_search, \
          patch("app.core.graph.get_grader_llm") as mock_get_grader, \
@@ -161,12 +163,12 @@ async def test_graph_hallucination_error_handling():
         # 2. Đánh giá tài liệu liên quan = 0.95
         mock_grader_chain = MockRunnable(MockBatchDocumentGrader([MockDocumentGrade(index=0, relevance_score=0.95)]))
         
-        # 3. LLM sinh câu trả lời bịa đặt (không có trong tài liệu) (Mock dưới dạng Runnable)
+        # 3. LLM sinh câu trả lời bịa đặt (không có trong tài liệu)
         mock_response = MagicMock()
         mock_response.content = "Quy định A cũng cho phép miễn thuế 100% (bịa đặt)."
         mock_get_generator.return_value = MockRunnable(mock_response)
         
-        # 4. Kiểm duyệt viên phát hiện Hallucination = True
+        # 4. Self-RAG: Kiểm duyệt viên phát hiện Hallucination = True
         mock_hal_chain = MockRunnable(MockHallucinationGrader(
             is_hallucination=True, 
             reason="Thông tin miễn thuế 100% không có trong tài liệu tham khảo."
@@ -180,10 +182,8 @@ async def test_graph_hallucination_error_handling():
             "generation": ""
         }
         
-        # Đồ thị phải bắn lỗi HallucinationError (Giả sử có logic này được thêm sau generator, dù hiện trong graph.py chưa thấy)
-        # Nếu graph không raise thì bài test này sẽ fail. Mình chỉ giữ nó y chang cũ và bỏ search_fallback.
-        try:
+        # Self-RAG: check_hallucination_node phải raise HallucinationError
+        with pytest.raises(HallucinationError) as exc_info:
             await graph.ainvoke(initial_state)
-        except Exception as exc:
-            assert isinstance(exc, Exception)  # Generic check
-
+        
+        assert "bịa đặt" in str(exc_info.value).lower() or "hallucination" in str(exc_info.value).lower()

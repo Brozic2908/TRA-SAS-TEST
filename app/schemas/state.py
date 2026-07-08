@@ -2,10 +2,11 @@ from typing import TypedDict, List, Dict, Any, Optional
 
 class GraphState(TypedDict):
     """
-    Trạng thái (State) đồ thị LangGraph điều phối RAG Hải quan.
+    Trạng thái (State) đồ thị LangGraph điều phối Self-RAG Hải quan.
     """
     question: str
     documents: List[str]
     citations: List[Dict[str, Any]]
     generation: str
-    is_off_topic: Optional[bool]  # True nếu câu hỏi ngoài phạm vi hải quan
+    is_off_topic: Optional[bool]       # True nếu câu hỏi ngoài phạm vi hải quan
+    hallucination_checked: Optional[bool]  # True nếu câu trả lời đã qua kiểm tra hallucination
